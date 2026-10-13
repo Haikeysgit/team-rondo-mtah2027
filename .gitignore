@@ -1,0 +1,5 @@
+# AI tool config, local only
+.claude/
+
+# Secrets and local settings
+.env
