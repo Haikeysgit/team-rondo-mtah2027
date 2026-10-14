@@ -20,6 +20,7 @@ data/
 *.csv
 *.parquet
 *.mp4
+*.mkv
 **/data/**/*.txt
 *.xml
 !tests/**/*.xml

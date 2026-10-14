@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Imisioluwa", email = "obasekiimisi5@gmail.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "kloppy==3.18.0",
     "matplotlib>=3.11.2",

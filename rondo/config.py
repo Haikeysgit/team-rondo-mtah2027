@@ -9,5 +9,5 @@ load_dotenv()
 
 
 def data_dir() -> Path:
-    """Return the data directory from MTAH_DATA_DIR (env or .env), default C:\rondo-data."""
+    r"""Return the data directory from MTAH_DATA_DIR (env or .env), default C:\rondo-data."""
     return Path(os.environ.get("MTAH_DATA_DIR", r"C:\rondo-data"))
