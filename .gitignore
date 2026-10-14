@@ -3,3 +3,29 @@
 
 # Secrets and local settings
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Competition data and derived artefacts must never be committed
+data/
+*.csv
+*.parquet
+*.mp4
+*.mkv
+**/data/**/*.txt
+*.xml
+!tests/**/*.xml
+*.pkl
+*.joblib
+*.lgb
+outputs/
+cache/
