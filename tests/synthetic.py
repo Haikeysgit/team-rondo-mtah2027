@@ -23,9 +23,12 @@ Events (``Step.team`` is the team in possession unless noted):
   (ball within 0.5 m at >= 15 m/s, never controlled), and goes on to a teammate. Truth unchanged.
 - ``aerial``: the ball flies to between a player of each team and hovers there, > 0.5 m from both.
   Nobody controls it. Truth unchanged.
-- ``out``: everyone stops, the ball leaves the pitch and stays out. Truth ``D``.
-- ``restart``: the ball is placed on the pitch where it left, a player of ``team`` runs to it, all
-  other players move again. Truth ``team``. Adds a ``SET PIECES`` / ``Throw-in`` tag opening 3.5 s
+- ``out``: the ball flies to the nearest line (players keep moving, truth stays the current team),
+  crosses it on frame ``max(1, n // 4)`` of the step and stays outside. From that frame truth is
+  ``D`` and every player stands still.
+- ``restart``: the ball is placed with the player of ``team`` nearest to where it went out (a
+  synthetic throw-in, not on the line) and he keeps it for the step; the other players move
+  again. Truth ``team``, with a player of ``team`` within 0.5 m of the ball on every frame. Adds a ``SET PIECES`` / ``Throw-in`` tag opening 3.5 s
   before the step and closing at its end.
 - ``missing``: ball NaN, players keep moving, possession continues. ``team`` is ignored.
 
@@ -276,7 +279,7 @@ class _World:
     def out(self, team: str, n: int):
         b = self.ball.copy()
         if _is_outside(b):
-            target, travel = b, 0.0
+            normal, gap, cross = np.zeros(2), 0.0, 0
         else:
             sides = [
                 (b[0], (-1.0, 0.0)),
@@ -285,26 +288,28 @@ class _World:
                 (H - b[1], (0.0, 1.0)),
             ]
             gap, normal = min(sides, key=lambda s: s[0])
-            travel = gap + 1.5
-            target = b + np.array(normal) * travel
-        flight = int(np.clip(math.floor(FPS * travel / OUT_SPEED), 1, max(1, n // 2)))
+            normal = np.array(normal)
+            cross = min(max(1, n // 4), n - 1)  # first dead frame, fixed by the step length
+        live = self.label
         for i in range(n):
-            self._move(halt_all=True)
-            self.ball = b + (target - b) * (min(i + 1, flight) / flight)
-            self._record("D")
+            dead = i >= cross
+            if i < cross:
+                travel = gap * (i + 1) / (cross + 1)  # still inside the pitch
+            else:
+                travel = gap + 1.5 * min(1.0, (i - cross + 1) / 3) if gap else 0.0
+            self._move(halt_all=dead)
+            self.ball = b + normal * travel
+            self._record("D" if dead else live)
         self.label, self.carrier = "D", None
 
     def restart(self, team: str, n: int):
         step_start = self.block_start + len(self.labels)
         self._take_possession(team)
-        spot = np.clip(self.ball, [0.5, 0.5], [W - 0.5, H - 0.5])
-        taker = self._nearest(team, spot)
+        # The ball is placed with the player of ``team`` nearest to where it went out, who keeps it.
+        taker = self._nearest(team, self.ball)
         for _ in range(n):
-            gap = spot - self.pos[taker]
-            dist = float(np.linalg.norm(gap))
-            vel = gap / dist * min(RUN_SPEED, dist * FPS) if dist > 0 else np.zeros(2)
-            self._move({taker: vel})
-            self.ball = spot + OFFSET
+            self._move({taker: np.zeros(2)})
+            self.ball = self.pos[taker] + OFFSET
             self._record(team)
         self.carrier = taker
         self.tags.append(

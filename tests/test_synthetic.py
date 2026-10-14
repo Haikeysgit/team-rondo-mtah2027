@@ -122,7 +122,7 @@ def test_each_event_truth_sequence(event):
     assert (block.iloc[:50] == "H").all()
     second = block.iloc[50:]
     if event == "out":
-        assert (second == "D").all()
+        assert (second.iloc[:12] == "H").all() and (second.iloc[12:] == "D").all()
     elif event == "interception":
         assert second.iloc[0] == "H" and second.iloc[-1] == "A"
         switch = (second == "A").idxmax()
@@ -140,7 +140,7 @@ def test_first_step_team_sets_initial_possession(event):
 @pytest.mark.parametrize("event", ["pass", "deflection", "aerial", "missing", "out"])
 def test_first_step_other_events_start_with_team(event):
     _, truth = make_match([Step(event, "A", 2)])
-    assert runs(truth) == (["D"] if event == "out" else ["A"])
+    assert runs(truth) == (["A", "D"] if event == "out" else ["A"])
 
 
 def test_possession_after_restart_and_loose_state():
@@ -175,14 +175,19 @@ def test_missing_after_out_keeps_dead_label():
 
 
 def test_out_ball_leaves_pitch_and_players_slow():
-    m, _ = make_match([Step("dribble", "H", 2), Step("out", "H", 3)], start=100)
+    m, truth = make_match([Step("dribble", "H", 2), Step("out", "H", 3)], start=100)
     ball = ball_m(m)[150:225]
+    labels = truth.iloc[150:225].to_numpy()
     outside = (ball[:, 0] < 0) | (ball[:, 0] > W) | (ball[:, 1] < 0) | (ball[:, 1] > H)
-    first = outside.argmax()
-    assert outside[first:].all() and first < 40
+    dead = labels == "D"
+    assert dead.any() and (outside == dead).all()  # D exactly while the ball is outside
+    first = dead.argmax()
+    assert dead[first:].all() and (labels[:first] == "H").all() and first == 75 // 4
     _, _, speed = player_arrays(m)
-    assert speed[150 - 100 :].max() <= 0.8  # frames from the out step onwards
-    assert speed[:50].mean() > 0.3  # but they were moving before it
+    out_speed = speed[50:]
+    assert out_speed[dead].max() <= 0.8
+    assert out_speed[:first].mean() > 0.3  # players keep moving while the ball is still live
+    assert speed[:50].mean() > 0.3
 
 
 def test_restart_tag_window():
@@ -219,6 +224,8 @@ def test_restart_ball_is_placed_inside_pitch_near_player_of_team():
     last = xy[-1]
     d = np.linalg.norm(last - ball[-1], axis=1)
     assert d[11:].min() < 0.5  # an A player holds the ball by the end
+    all_d = np.linalg.norm(xy[-75:] - ball[:, None, :], axis=2)
+    assert (all_d[:, 11:].min(axis=1) <= 0.5).all()  # a player of the team is on the ball always
     assert speed[100:].max() > 1.0  # players move again after the out step
 
 
