@@ -18,23 +18,29 @@ Events (``Step.team`` is the team in possession unless noted):
 - ``interception``: ``team`` is the *other* team. The ball flies from the holder to a player of
   ``team`` who stands still (flight takes the first half of the step, at >= 15 m/s when a far
   enough player exists), then sits with him. Truth switches to ``team`` on the first frame the
-  ball is within 0.5 m of him and slow (he controls it): frame ``n // 2`` of the step.
-- ``deflection``: the ball flies from the holder, touches a standing opponent for one frame
-  (ball within 0.5 m at >= 15 m/s, never controlled), and goes on to a teammate. Truth unchanged.
+  ball is within 0.5 m of him and slow (he controls it): frame ``n // 2`` of the step. The flight
+  is a pass of up to ~30 m, so keep the step to about 4 s at most.
+- ``deflection``: the ball flies from the holder, touches a standing opponent (usually for one
+  frame: ball within 0.5 m at >= 15 m/s, never controlled), and goes on to a teammate. Truth
+  unchanged.
 - ``aerial``: the ball flies to between a player of each team and hovers there, > 0.5 m from both.
   Nobody controls it. Truth unchanged.
-- ``out``: the ball flies to the nearest line (players keep moving, truth stays the current team),
-  crosses it on frame ``max(1, n // 4)`` of the step and stays outside. From that frame truth is
-  ``D`` and every player stands still.
-- ``restart``: the ball is placed with the player of ``team`` nearest to where it went out (a
-  synthetic throw-in, not on the line) and he keeps it for the step; the other players move
-  again. Truth ``team``, with a player of ``team`` within 0.5 m of the ball on every frame. Adds a ``SET PIECES`` / ``Throw-in`` tag opening 3.5 s
-  before the step and closing at its end.
+- ``out``: the ball flies towards a line (players keep moving, truth stays the current team),
+  crosses it on frame ``max(1, n // 4)`` of the step and stays at least 1 m outside. From that
+  frame truth is ``D`` and every player stands still, except that when a ``restart`` follows, the
+  player of that team who will take it jogs (<= 6 m/s) to the line and the ball ends up just
+  outside next to him (the mean speed of all players on D frames stays <= 0.8 m/s).
+- ``restart``: the ball is placed with that player (a synthetic throw-in on the line, 0.5 m
+  inside it; without a preceding ``out`` the nearest player of ``team``) and he keeps it for the
+  step; the other players move again. Truth ``team``, with a player of ``team`` within 0.5 m of
+  the ball on every frame.
 - ``missing``: ball NaN, players keep moving, possession continues. ``team`` is ignored.
 
 Steps that need the ball (``pass``, ``interception``, ``deflection``, ``aerial``, ``dribble``) hand
-it to the nearest player of the possessing team if nobody holds it (for example after ``aerial``
-or ``out``); the ball may jump by a few metres then. ``dribble`` and ``restart`` set the team in
+it to the nearest player of the possessing team if nobody holds it (for example after ``aerial``);
+the ball may jump by a few metres then. After ``out`` only ``restart``, ``dribble``, ``missing``
+and ``out`` are allowed; ``pass``, ``deflection``, ``aerial`` and ``interception`` raise
+``ValueError``. ``dribble`` and ``restart`` set the team in
 possession from ``team``; for the first step all events start with ``team``.
 Frames outside the half block have no players, no ball and truth ``X``.
 """
@@ -63,12 +69,13 @@ OFFSET = np.array([0.3, 0.0])  # ball position relative to the player holding it
 CARRY_SPEED = 5.0  # m/s
 PASS_SPEED = 15.0  # minimum ball speed in flight, m/s
 OUT_SPEED = 12.0
-RUN_SPEED = 9.0  # restart taker
+TAKER_SPEED = 6.0  # m/s, the player who will take a restart jogs to the line
 RESTART_LEAD_FRAMES = 88  # 3.5 s
 OFFICIAL_FRAMES = 199319
 
 _SPRING = 0.3  # 1/s, pull towards the grid position
-_WANDER_DECAY, _WANDER_SIGMA, _MAX_FREE = 0.97, 0.35, 4.0
+_WANDER_DECAY, _WANDER_SIGMA, _MIN_FREE, _MAX_FREE = 0.97, 0.45, 1.6, 6.0
+_WANDER_STATIONARY = _WANDER_SIGMA / math.sqrt(1 - _WANDER_DECAY**2)  # per-axis spread, m/s
 
 
 @dataclass
@@ -107,7 +114,9 @@ class _World:
         self.block_start = block_start
         self.base = _grid(rng)
         self.pos = self.base.copy()
-        self.wander = np.zeros((N_PLAYERS, 2))
+        self.wander = rng.normal(0.0, _WANDER_STATIONARY, (N_PLAYERS, 2))
+        self.next_restart: str | None = None  # team of a restart that follows this step
+        self.taker: int | None = None
         self.team = first_team  # team in possession (kept while the ball is dead)
         self.label = first_team  # H, A or D
         self.carrier = min(_slots(first_team), key=lambda s: (self._dist(s, (W / 2, H / 2)), s))
@@ -145,7 +154,7 @@ class _World:
         )
         v = _SPRING * (self.base - self.pos) + self.wander
         norm = np.linalg.norm(v, axis=1)
-        v *= np.minimum(1.0, _MAX_FREE / np.maximum(norm, 1e-9))[:, None]
+        v *= (np.clip(norm, _MIN_FREE, _MAX_FREE) / np.maximum(norm, 1e-9))[:, None]
         if halt_all:
             v[:] = 0.0
         for slot, vel in (overrides or {}).items():
@@ -176,6 +185,10 @@ class _World:
     def _flight_frames(distance: float, cap: int) -> int:
         return int(np.clip(math.floor(FPS * distance / PASS_SPEED), 1, max(1, cap)))
 
+    def _require_live(self, event: str):
+        if self.label == "D":
+            raise ValueError(f"{event} after out needs a restart (or dribble) first")
+
     def _take_possession(self, team: str):
         if team != self.team:
             self.carrier = None
@@ -200,6 +213,7 @@ class _World:
         self.carrier = c
 
     def pass_(self, team: str, n: int):
+        self._require_live("pass")
         passer = self._holder()
         receiver = self._closest_to_distance(
             [s for s in _slots(self.team) if s != passer], self.pos[passer], 18.0, min_d=2.0
@@ -211,6 +225,7 @@ class _World:
         self.carrier = receiver
 
     def interception(self, team: str, n: int):
+        self._require_live("interception")
         if team == self.team:
             raise ValueError("interception: team must be the team that does not have the ball")
         if n < 2:
@@ -227,6 +242,7 @@ class _World:
         self.team, self.label, self.carrier = team, team, taker
 
     def deflection(self, team: str, n: int):
+        self._require_live("deflection")
         if n < 2:
             raise ValueError("deflection needs at least 2 frames")
         passer = self._holder()
@@ -246,6 +262,7 @@ class _World:
         self.carrier = receiver
 
     def aerial(self, team: str, n: int):
+        self._require_live("aerial")
         holder = self._holder()
         pairs = [
             (q, o) for q in _slots(self.team) if q != holder for o in _slots(_other(self.team))
@@ -276,37 +293,67 @@ class _World:
             self._record(self.label)
         self.carrier = q
 
+    def _pick_taker(self, team: str) -> tuple[int, np.ndarray, np.ndarray]:
+        """Player of ``team`` closest to a line: (slot, outward unit normal, spot 0.5 m inside)."""
+        best = None
+        for slot in _slots(team):
+            x, y = self.pos[slot]
+            for gap, normal, spot in (
+                (x, (-1.0, 0.0), (0.5, y)),
+                (W - x, (1.0, 0.0), (W - 0.5, y)),
+                (y, (0.0, -1.0), (x, 0.5)),
+                (H - y, (0.0, 1.0), (x, H - 0.5)),
+            ):
+                if best is None or gap < best[0]:
+                    best = (gap, slot, np.array(normal), np.array(spot))
+        return best[1], best[2], best[3]
+
     def out(self, team: str, n: int):
         b = self.ball.copy()
-        if _is_outside(b):
-            normal, gap, cross = np.zeros(2), 0.0, 0
-        else:
-            sides = [
-                (b[0], (-1.0, 0.0)),
-                (W - b[0], (1.0, 0.0)),
-                (b[1], (0.0, -1.0)),
-                (H - b[1], (0.0, 1.0)),
-            ]
-            gap, normal = min(sides, key=lambda s: s[0])
-            normal = np.array(normal)
+        taker, spot = None, None
+        normal, gap, cross, rest = np.zeros(2), 0.0, 0, b
+        if not _is_outside(b):
             cross = min(max(1, n // 4), n - 1)  # first dead frame, fixed by the step length
+            if self.next_restart is not None:
+                taker, normal, spot = self._pick_taker(self.next_restart)
+            else:
+                sides = [
+                    (b[0], (-1.0, 0.0)),
+                    (W - b[0], (1.0, 0.0)),
+                    (b[1], (0.0, -1.0)),
+                    (H - b[1], (0.0, 1.0)),
+                ]
+                normal = np.array(min(sides, key=lambda s: s[0])[1])
+            axis = 0 if normal[0] else 1
+            line = (W, H)[axis] if normal[axis] > 0 else 0.0
+            gap = abs(line - b[axis])
+            # Rest point: 1.5 m beyond the line, next to the taker when there is one.
+            rest = spot + normal * 2.0 if spot is not None else b + normal * (gap + 1.5)
         live = self.label
         for i in range(n):
             dead = i >= cross
             if i < cross:
-                travel = gap * (i + 1) / (cross + 1)  # still inside the pitch
+                u = gap * (i + 1) / (cross + 1) / (gap + 1.5)  # still inside the pitch
             else:
-                travel = gap + 1.5 * min(1.0, (i - cross + 1) / 3) if gap else 0.0
-            self._move(halt_all=dead)
-            self.ball = b + normal * travel
+                u = (gap + 1.0 + 0.5 * min(1.0, (i - cross + 1) / 3)) / (gap + 1.5)
+            overrides = {}
+            if taker is not None:
+                to_spot = spot - self.pos[taker]
+                dist = float(np.linalg.norm(to_spot))
+                if dist > 0:
+                    overrides[taker] = to_spot / dist * min(TAKER_SPEED, dist * FPS)
+            self._move(overrides, halt_all=dead)
+            self.ball = b + (rest - b) * u
             self._record("D" if dead else live)
-        self.label, self.carrier = "D", None
+        self.label, self.carrier, self.taker = "D", None, taker
 
     def restart(self, team: str, n: int):
         step_start = self.block_start + len(self.labels)
         self._take_possession(team)
-        # The ball is placed with the player of ``team`` nearest to where it went out, who keeps it.
-        taker = self._nearest(team, self.ball)
+        taker = self.taker
+        if taker is None or taker not in _slots(team):
+            taker = self._nearest(team, self.ball)
+        self.taker = None
         for _ in range(n):
             self._move({taker: np.zeros(2)})
             self.ball = self.pos[taker] + OFFSET
@@ -354,7 +401,10 @@ def make_match(
         raise ValueError(f"steps need {total} frames from {start} and do not fit in {n_frames}")
 
     world = _World(np.random.default_rng(seed), steps[0].team, start)
-    for step, n in zip(steps, lengths):
+    for i, (step, n) in enumerate(zip(steps, lengths)):
+        following = steps[i + 1] if i + 1 < len(steps) else None
+        is_restart = following is not None and following.event == "restart"
+        world.next_restart = following.team if is_restart else None
         name = "pass_" if step.event == "pass" else step.event
         getattr(world, name)(step.team, n)
 

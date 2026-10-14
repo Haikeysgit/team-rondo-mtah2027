@@ -356,3 +356,66 @@ def test_interception_switches_at_half_of_the_step(seconds):
     _, truth = make_match([Step("dribble", "H", 1), Step("interception", "A", seconds)], start=0)
     assert (truth.iloc[25 : 25 + n // 2] == "H").all()
     assert (truth.iloc[25 + n // 2 : 25 + n] == "A").all()
+
+
+def _outside_by(ball):
+    return np.max([-ball[:, 0], ball[:, 0] - W, -ball[:, 1], ball[:, 1] - H], axis=0)
+
+
+@pytest.mark.parametrize("with_restart", [False, True])
+@pytest.mark.parametrize("seed", range(3))
+def test_every_dead_frame_has_the_ball_clearly_outside(with_restart, seed):
+    steps = [Step("dribble", "H", 2), Step("out", "H", 2)]
+    steps += [Step("restart", "A", 2)] if with_restart else []
+    m, truth = make_match(steps, start=0, seed=seed)
+    dead = (truth == "D").to_numpy()
+    assert dead.any()
+    assert (_outside_by(ball_m(m))[dead] > 0.5).all()  # clear of Task 11's 0.5 m tolerance
+
+
+@pytest.mark.parametrize("event", ["pass", "deflection", "aerial", "interception"])
+def test_ball_events_straight_after_out_need_a_restart(event):
+    steps = [Step("dribble", "H", 1), Step("out", "H", 1), Step(event, "A", 1)]
+    with pytest.raises(ValueError, match=f"{event} after out needs a restart"):
+        make_match(steps)
+    for allowed in ("restart", "dribble", "missing", "out"):
+        make_match(steps[:2] + [Step(allowed, "A", 1)])
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_live_play_keeps_players_moving(seed):
+    m, truth = make_match(
+        [
+            Step("dribble", "H", 3),
+            Step("pass", "H", 2),
+            Step("missing", "H", 8),
+            Step("aerial", "H", 2),
+            Step("dribble", "H", 2),
+        ],
+        start=0,
+        seed=seed,
+    )
+    _, _, speed = player_arrays(m)
+    live = (truth.iloc[: len(speed)] != "D").to_numpy()
+    per_frame = speed.mean(axis=1)[live]
+    assert per_frame.min() > 1.2  # also the first frames of the block
+    assert 1.6 < per_frame.mean() < 3.0
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_restart_ball_does_not_teleport_and_dead_frames_stay_slow(seed):
+    m, truth = make_match(
+        [Step("dribble", "A", 3), Step("out", "A", 2), Step("restart", "H", 2)],
+        start=0,
+        seed=seed,
+    )
+    ball = ball_m(m)
+    _, _, speed = player_arrays(m)
+    lab = truth.to_numpy()[: len(speed)]
+    last_dead = np.where(lab == "D")[0][-1]
+    assert np.linalg.norm(ball[last_dead + 1] - ball[last_dead]) < 3.0
+    dead = lab == "D"
+    assert speed[dead].mean(axis=1).max() <= 0.8
+    # everyone but the taker (who jogs to the line) stands still
+    walkers = (speed[dead] > 0.8).any(axis=0)
+    assert walkers.sum() <= 1
