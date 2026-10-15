@@ -47,7 +47,14 @@ def test_pipeline_passes_emission_params(synthetic_config):
     assert len(run(m, cfg)) == m.meta.n_frames
 
 
-def test_missing_components_listed_with_tasks(synthetic_config):
+def test_missing_components_listed_with_tasks(synthetic_config, monkeypatch):
+    # Pretend the not-yet-merged tasks are absent, whatever has been merged since.
+    for name in ("ball_nearest", "tag_restarts"):
+        monkeypatch.delitem(registry.SIGNALS, name, raising=False)
+    for name in ("rules_v0",):
+        monkeypatch.delitem(registry.EMISSIONS, name, raising=False)
+    for name in ("viterbi",):
+        monkeypatch.delitem(registry.DECODERS, name, raising=False)
     m, _ = make_match(STEPS)
     cfg = {
         **synthetic_config,

@@ -135,7 +135,8 @@ def check_bundle(data_dir: Path | None = None, *, expected_records: int | None =
     Keys: ``n_records``, ``aligned`` (record count equals ``expected_records`` -- default the
     official 199,319 --, ids contiguous, first id 1), ``ball_present_graded_pct`` (None when no
     graded frame is present), ``n_tags``, ``homography_rows``, ``homography_valid_pct``,
-    ``ball_fields`` (comma fields in the ball group; more than 3 hints at a ball-status field).
+    ``ball_fields`` (comma fields in the ball group; more than 3 hints at a ball-status field),
+    ``unknown_tag_codes`` (sorted tag codes missing from ``POSSESSION_SIDE``; category names only).
     """
     n_frames = _official_frames() if expected_records is None else int(expected_records)
     _, paths = _paths(data_dir, ("atd_meta", "atd_raw", "smart_tagging", "homography"))
@@ -154,6 +155,10 @@ def check_bundle(data_dir: Path | None = None, *, expected_records: int | None =
     valid_pct = float(100.0 * homography["valid"].mean()) if len(homography) else None
 
     n_tags = sum(1 for _ in ElementTree.parse(paths["smart_tagging"]).getroot().iter("instance"))
+    from rondo.signals.tags import unknown_tag_codes  # local: the signals package imports rondo
+
+    _, home, _ = read_atd_meta(paths["atd_meta"])
+    unknown = unknown_tag_codes(read_tags(paths["smart_tagging"], home))
     return {
         "n_records": int(report["n_records"]),
         "aligned": _aligned(report, n_frames),
@@ -162,4 +167,5 @@ def check_bundle(data_dir: Path | None = None, *, expected_records: int | None =
         "homography_rows": len(homography),
         "homography_valid_pct": valid_pct,
         "ball_fields": int(report["ball_fields"]),
+        "unknown_tag_codes": unknown,
     }

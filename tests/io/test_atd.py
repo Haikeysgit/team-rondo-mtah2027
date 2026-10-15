@@ -100,9 +100,10 @@ def test_check_bundle_report(tmp_path):
     assert rep["aligned"] is True
     assert rep["n_records"] == 40 and rep["n_tags"] == 3
     assert rep["ball_fields"] == 4
+    assert rep["unknown_tag_codes"] == ["GOAL"]  # fixture says "Goal", the table has "GOALS"
     assert rep["homography_rows"] == 40 and rep["homography_valid_pct"] == 75.0
     assert rep["ball_present_graded_pct"] is None  # official half blocks lie beyond 40 frames
-    assert all(type(v) in (int, float, bool, type(None)) for v in rep.values())
+    assert all(type(v) in (int, float, bool, type(None), list) for v in rep.values())
 
 
 def test_check_bundle_ball_present_on_graded(tmp_path):
