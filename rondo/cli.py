@@ -6,6 +6,8 @@ import argparse
 import tomllib
 from pathlib import Path
 
+import pandas as pd
+
 from rondo import kit
 from rondo.io.load import check_bundle, load_match
 from rondo.pipeline import run as run_pipeline
@@ -13,7 +15,6 @@ from rondo.post import summarize, validate_official, write_submission
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "default.toml"
 LATER = {
-    "score": "Task 8",
     "label": "Task 14",
     "verify-repro": "Task 7",
 }
@@ -55,6 +56,48 @@ def _run(args: argparse.Namespace) -> int:
     return 0 if verdict is None else 1
 
 
+def _score(args: argparse.Namespace) -> int:
+    from rondo import config as runtime_config
+    from rondo.eval import load_windows, read_labels, score_all, write_result
+
+    if args.result and not args.owner:
+        _parser().error("--result needs --owner")
+    data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+    windows = load_windows(data_dir)
+    n_frames = len(windows["public"])
+    if args.windows:
+        unknown = sorted(set(args.windows) - set(windows))
+        if unknown:
+            print(f"unknown window(s): {', '.join(unknown)}; available: {', '.join(windows)}")
+            return 2
+        windows = {name: windows[name] for name in windows if name in args.windows}
+    try:
+        pred = read_labels(Path(args.csv), n_frames=n_frames)
+    except ValueError as error:
+        print(f"invalid submission: {error}")
+        return 1
+
+    table = score_all(pred, windows, bootstrap=args.bootstrap)
+    print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
+    for row in table.itertuples(index=False):
+        interval = (
+            f"{row.spell_bootstrap_low:.4f}..{row.spell_bootstrap_high:.4f}"
+            if pd.notna(row.spell_bootstrap_low)
+            else "-"
+        )
+        print(
+            f"{row.window:<10} {row.n_graded:>7} {row.spell_f1_mean:>8.4f} {interval:>15} "
+            f"{row.macro_f1:>8.4f}  {row.n_pred_spells} / {row.n_gt_spells}"
+        )
+    if args.result:
+        command = f"rondo score {args.csv} --bootstrap {args.bootstrap}"
+        if args.windows:
+            command += f" --windows {' '.join(args.windows)}"
+        write_result(Path(args.result), args.owner, command, table, args.notes)
+        print(f"wrote {args.result}")
+    return 0
+
+
 def _later(command: str):
     def handler(_: argparse.Namespace) -> int:
         print(f"rondo {command} is available once {LATER[command]} is merged")
@@ -79,6 +122,16 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--expected-frames", type=int)
     run.add_argument("--validate-rows", type=int)
     run.set_defaults(handler=_run)
+
+    score = sub.add_parser("score", help="official scores on every validation window")
+    score.add_argument("csv", help="a full-length frame,label file")
+    score.add_argument("--data-dir", help="hand-labelled windows are read from <data-dir>/labels")
+    score.add_argument("--windows", nargs="+", help="score only these windows (default: all)")
+    score.add_argument("--bootstrap", type=int, default=0, help="bootstrap draws, e.g. 1000")
+    score.add_argument("--result", help="also write results/YYYY-MM-DD-name-topic.md")
+    score.add_argument("--owner", help="name written in the results file")
+    score.add_argument("--notes", default="", help="notes written in the results file")
+    score.set_defaults(handler=_score)
 
     for command, task in LATER.items():
         later = sub.add_parser(command, help=f"available once {task} is merged")
