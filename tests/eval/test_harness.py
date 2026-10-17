@@ -209,7 +209,7 @@ def test_write_result_follows_the_results_template(tmp_path):
     table = harness.score_all(late_by_one(wins["public"]), wins, bootstrap=100)
     path = tmp_path / "2026-10-17-kiki-official-baselines.md"
     harness.write_result(path, "Kiki", "rondo score x.csv --bootstrap 100", table, "Looks right.")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert text.startswith("# official baselines\n")
     assert "- Date: 2026-10-17" in text and "- Owner: Kiki" in text
     assert "- Command: `rondo score x.csv --bootstrap 100`" in text
@@ -225,7 +225,7 @@ def test_write_result_marks_a_missing_interval(tmp_path):
     table = harness.score_all(wins["public"], wins)
     path = tmp_path / "2026-10-17-kiki-smoke.md"
     harness.write_result(path, "Kiki", "rondo score x.csv", table, "")
-    assert "| public | 1.0000 | — |" in path.read_text()
+    assert "| public | 1.0000 | — |" in path.read_text(encoding="utf-8")
 
 
 def test_write_result_marks_a_window_without_possessions(tmp_path):
@@ -233,5 +233,5 @@ def test_write_result_marks_a_window_without_possessions(tmp_path):
     table = harness.score_all(window(1000), wins, bootstrap=50)
     path = tmp_path / "2026-10-17-kiki-dead.md"
     harness.write_result(path, "Kiki", "rondo score x.csv", table, "")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "| dead | 0.0000 | — |" in text and "nan" not in text

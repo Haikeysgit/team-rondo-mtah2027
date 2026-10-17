@@ -69,7 +69,7 @@ def test_cli_score_writes_a_results_file(capsys, tmp_path):
     result = tmp_path / "results" / "2026-10-17-kiki-smooth50.md"
     argv = ["score", str(BASELINE), "--data-dir", str(tmp_path), "--result", str(result)]
     assert main(argv + ["--owner", "Kiki", "--notes", "Pipeline check."]) == 0
-    text = result.read_text()
+    text = result.read_text(encoding="utf-8")
     assert "# smooth50" in text and "- Owner: Kiki" in text and "| public | 0.3256 |" in text
     assert "rondo score" in text and "Pipeline check." in text
 
