@@ -236,3 +236,29 @@ def test_with_viterbi_a_possession_a_stoppage_and_a_restart_become_three_spells(
     )
     labels = registry.DECODERS["viterbi"](emissions, no_tags, meta, {})["label"].tolist()
     assert labels == ["H"] * 200 + ["D"] * 100 + ["A"] * 150
+
+
+def test_the_default_pipeline_on_task_11_signals_recovers_a_turnover_and_a_restart():
+    # Guards the link between rules_v0 and the real ball/player signals (column names, dtypes).
+    # The full scenario suite is Task 13's.
+    import tomllib
+    from pathlib import Path
+
+    from rondo.eval import score
+    from rondo.pipeline import run
+    from tests.synthetic import Step, make_match
+
+    config_path = Path(__file__).resolve().parents[2] / "configs" / "default.toml"
+    config = tomllib.loads(config_path.read_text())
+    steps = [
+        Step("dribble", "H", 4),
+        Step("interception", "A", 3),
+        Step("dribble", "A", 3),
+        Step("out", "A", 6),
+        Step("restart", "H", 3),
+        Step("dribble", "H", 4),
+    ]
+    match, truth = make_match(steps, n_frames=1000)
+    pred = run(match, config).set_index("frame")["label"]
+    assert (pred == truth).all()
+    assert score(pred, truth)["spell_f1_mean"] == 1.0
