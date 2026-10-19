@@ -63,7 +63,11 @@ def _score(args: argparse.Namespace) -> int:
     if args.result and not args.owner:
         _parser().error("--result needs --owner")
     data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
-    windows = load_windows(data_dir)
+    try:
+        windows = load_windows(data_dir)
+    except ValueError as error:
+        print(f"invalid window: {error}")
+        return 1
     n_frames = len(windows["public"])
     if args.windows:
         unknown = sorted(set(args.windows) - set(windows))
@@ -77,7 +81,11 @@ def _score(args: argparse.Namespace) -> int:
         print(f"invalid submission: {error}")
         return 1
 
-    table = score_all(pred, windows, bootstrap=args.bootstrap)
+    try:
+        table = score_all(pred, windows, bootstrap=args.bootstrap)
+    except ValueError as error:  # two windows label the same frame differently
+        print(f"invalid windows: {error}")
+        return 1
     print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
     for row in table.itertuples(index=False):
         interval = (
