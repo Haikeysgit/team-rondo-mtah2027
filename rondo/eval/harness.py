@@ -71,7 +71,7 @@ def score_all(pred: pd.Series, windows: dict[str, pd.Series], bootstrap: int = 0
 
 
 def write_result(path: Path, owner: str, command: str, table: pd.DataFrame, notes: str) -> None:
-    """Write a ``results/`` file in the ``results/README.md`` template. Aggregates only.
+    """Write an experiment results file (Markdown, the team's template). Aggregates only.
 
     The date and topic come from the file name (``YYYY-MM-DD-name-topic.md``), so the same run
     writes the same file; the commit is the current ``HEAD``.

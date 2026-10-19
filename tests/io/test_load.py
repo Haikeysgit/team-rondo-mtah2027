@@ -1,11 +1,13 @@
+import importlib.metadata
 import os
 import pickle
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from rondo.contracts import MatchData, validate_frames, validate_players, validate_tags
-from rondo.io import load_match
+from rondo.io import load, load_match
 from tests.io.fixtures import TAGS_XML, write_bundle
 
 
@@ -66,3 +68,44 @@ def test_cache_reused_then_invalidated(tmp_path):
     reloaded = load_match(bundle, expected_frames=50)
     assert reloaded.meta.away_name == "Athletic Club"
     assert "FOUL" in reloaded.tags["code"].tolist()
+
+
+def _tamper(cache_file):
+    with open(cache_file, "rb") as f:
+        key, match = pickle.load(f)
+    match.meta = type(match.meta)(**{**match.meta.__dict__, "away_name": "CACHED"})
+    with open(cache_file, "wb") as f:
+        pickle.dump((key, match), f)
+
+
+def test_cache_key_changes_with_the_version_stamp(tmp_path, monkeypatch):
+    bundle = write_bundle(tmp_path, n=50)
+    load_match(bundle, expected_frames=50)
+    _tamper(bundle / "cache" / "match.pkl")
+    assert load_match(bundle, expected_frames=50).meta.away_name == "CACHED"
+    monkeypatch.setattr(load, "CACHE_FORMAT", load.CACHE_FORMAT + 1)  # e.g. a code change
+    assert load_match(bundle, expected_frames=50).meta.away_name == "Athletic Club"
+
+
+def test_cache_stamp_names_the_code_and_library_versions():
+    stamp = load.cache_stamp()
+    assert stamp == (
+        load.CACHE_FORMAT,
+        importlib.metadata.version("rondo"),
+        pd.__version__,
+        np.__version__,
+    )
+
+
+def test_no_cache_neither_reads_nor_writes(tmp_path):
+    bundle = write_bundle(tmp_path, n=50)
+    load_match(bundle, cache=False, expected_frames=50)
+    assert not (bundle / "cache").exists()
+
+
+def test_refresh_ignores_the_cache_and_rewrites_it(tmp_path):
+    bundle = write_bundle(tmp_path, n=50)
+    load_match(bundle, expected_frames=50)
+    _tamper(bundle / "cache" / "match.pkl")
+    assert load_match(bundle, refresh=True, expected_frames=50).meta.away_name == "Athletic Club"
+    assert load_match(bundle, expected_frames=50).meta.away_name == "Athletic Club"

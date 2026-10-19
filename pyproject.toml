@@ -37,6 +37,7 @@ extend-exclude = ["vendor"]
 
 [dependency-groups]
 dev = [
+    "git-filter-repo>=2.47.0",
     "nbstripout>=0.9.1",
     "pre-commit>=4.7.0",
     "pytest>=9.1.1",
