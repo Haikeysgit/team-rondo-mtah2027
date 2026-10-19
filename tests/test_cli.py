@@ -177,3 +177,65 @@ def test_cli_score_reports_clashing_windows_without_a_traceback(capsys, tmp_path
         labels.to_frame().reset_index().to_csv(tmp_path / "labels" / f"{name}.csv", index=False)
     assert main(["score", str(BASELINE), "--data-dir", str(tmp_path)]) == 1
     assert "disagree" in capsys.readouterr().out
+
+
+def _write_window(tmp_path: Path, name: str, labels: pd.Series) -> None:
+    (tmp_path / "labels").mkdir(exist_ok=True)
+    labels.to_frame().reset_index().to_csv(tmp_path / "labels" / f"{name}.csv", index=False)
+
+
+def test_cli_errors_prints_counts_and_timestamps(capsys, tmp_path):
+    truth = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+    truth.iloc[30000:30500] = "H"
+    truth.iloc[30500:31000] = "A"
+    _write_window(tmp_path, "w1", truth)
+
+    pred = truth.copy()
+    pred.iloc[30500:30525] = "H"  # the H -> A transition comes 25 frames late in the prediction
+    pred_path = tmp_path / "pred.csv"
+    pred.to_frame().reset_index().to_csv(pred_path, index=False)
+
+    assert main(["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1"]) == 0
+    out = capsys.readouterr().out
+    assert "missed: 0" in out and "spurious: 0" in out and "late: 1" in out
+    assert "20:20" in out  # the ground-truth transition's frame, 30500, at 25fps
+
+
+def test_cli_errors_rejects_an_unknown_window(capsys, tmp_path):
+    (tmp_path / "pred.csv").write_text("frame,label\n")  # never read: the window check is first
+    argv = ["errors", str(tmp_path / "pred.csv"), "--data-dir", str(tmp_path), "--window", "w9"]
+    assert main(argv) == 2
+    assert "w9" in capsys.readouterr().out
+
+
+def test_cli_errors_reports_an_invalid_submission(capsys, tmp_path):
+    bad = tmp_path / "bad.csv"
+    bad.write_text("frame,label\n0,H\n")
+    assert main(["errors", str(bad), "--data-dir", str(tmp_path), "--window", "public"]) == 1
+    assert "bad.csv" in capsys.readouterr().out
+
+
+def test_cli_errors_play_opens_each_moment_in_the_labeltool(monkeypatch, tmp_path):
+    truth = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+    truth.iloc[30000:30500] = "H"
+    truth.iloc[30500:31000] = "A"
+    _write_window(tmp_path, "w1", truth)
+
+    pred = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+    pred.iloc[30000:30500] = "H"  # the H -> A transition at 30500 is missed entirely
+    pred_path = tmp_path / "pred.csv"
+    pred.to_frame().reset_index().to_csv(pred_path, index=False)
+
+    seen = []
+    monkeypatch.setattr(
+        "rondo.labeltool.app.run",
+        lambda data_dir, window, start, end: seen.append((data_dir, window, start, end)),
+    )
+    argv = ["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1", "--play"]
+    assert main(argv) == 0
+    assert len(seen) == 1
+    data_dir, window, start, end = seen[0]
+    assert data_dir == tmp_path
+    assert window == "err_missed_30500"
+    assert start == 30500 - cli.PLAY_MARGIN_FRAMES
+    assert end == 30500 + cli.PLAY_MARGIN_FRAMES
