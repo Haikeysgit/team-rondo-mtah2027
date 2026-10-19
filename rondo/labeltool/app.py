@@ -45,11 +45,14 @@ def _save(data_dir: Path, window: str, marks: dict[int, str], start: int, end: i
         print(f"not saved: need a mark at the window start ({start}) before the first save")
         return
     out_dir = Path(data_dir) / "labels"
+    marks_dir = out_dir / "marks"
     out_dir.mkdir(parents=True, exist_ok=True)
+    marks_dir.mkdir(parents=True, exist_ok=True)
     marks_df = _sorted_marks(marks)
-    marks_df.to_csv(out_dir / f"{window}_marks.csv", index=False)
+    marks_path = marks_dir / f"{window}_marks.csv"
+    marks_df.to_csv(marks_path, index=False)
     expand_transitions(marks_df, start, end, n).to_csv(out_dir / f"{window}.csv")
-    print(f"saved {len(marks_df)} mark(s) to {out_dir / f'{window}_marks.csv'} and {window}.csv")
+    print(f"saved {len(marks_df)} mark(s) to {marks_path} and {window}.csv")
 
 
 def run(data_dir: Path | None, window: str, start: int, end: int) -> None:
