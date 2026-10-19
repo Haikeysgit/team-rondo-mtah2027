@@ -42,7 +42,12 @@ def _run(args: argparse.Namespace) -> int:
     data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
-    match = load_match(data_dir, expected_frames=args.expected_frames)
+    match = load_match(
+        data_dir,
+        cache=not args.no_cache,
+        expected_frames=args.expected_frames,
+        refresh=args.refresh_cache,
+    )
     labels = run_pipeline(match, config)
     out = Path(args.out) if args.out else data_dir / "outputs" / "team-rondo.csv"
     digest = write_submission(labels, out)
@@ -62,7 +67,12 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _verify_repro(args: argparse.Namespace) -> int:
-    """``rondo run`` twice, each in a fresh process, into two files; compare their SHA-256."""
+    """``rondo run`` twice, each in a fresh process, into two files; compare their SHA-256.
+
+    Run 1 is cold: it builds the match from the source files, as a judge's first run does, and
+    rewrites the cache. Run 2 is warm: it reads that cache. Identical files therefore also show
+    that the cache does not change the output.
+    """
     base = [sys.executable, "-m", RUN_MODULE, "run", "--config", str(Path(args.config).resolve())]
     if args.data_dir:
         base += ["--data-dir", str(Path(args.data_dir).resolve())]
@@ -74,10 +84,10 @@ def _verify_repro(args: argparse.Namespace) -> int:
             base += [flag, str(value)]
     digests = []
     with tempfile.TemporaryDirectory(prefix="rondo-repro-", ignore_cleanup_errors=True) as tmp:
-        for run in (1, 2):
+        for run, flags in ((1, ["--refresh-cache"]), (2, [])):
             out = Path(tmp) / f"run{run}" / "team-rondo.csv"
             done = subprocess.run(
-                [*base, "--out", str(out)],
+                [*base, *flags, "--out", str(out)],
                 check=False,
                 cwd=REPO_ROOT,
                 capture_output=True,
@@ -160,6 +170,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--out")
     run.add_argument("--expected-frames", type=int)
     run.add_argument("--validate-rows", type=int)
+    caching = run.add_mutually_exclusive_group()
+    caching.add_argument(
+        "--no-cache", action="store_true", help="build from the source files; no cache read/write"
+    )
+    caching.add_argument(
+        "--refresh-cache", action="store_true", help="build from the source files, rewrite cache"
+    )
     run.set_defaults(handler=_run)
 
     repro = sub.add_parser("verify-repro", help="run twice in fresh processes, compare SHA-256")

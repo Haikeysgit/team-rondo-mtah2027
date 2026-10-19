@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from rondo import kit
+from rondo import cli, kit
 from rondo.cli import main
 from rondo.post import validate_official
 
@@ -110,3 +110,36 @@ def test_cli_score_shows_a_dash_for_a_window_without_possessions(capsys, tmp_pat
     assert main(["score", str(BASELINE), "--data-dir", str(tmp_path), "--bootstrap", "10"]) == 0
     out = capsys.readouterr().out
     assert "nan" not in out and [ln for ln in out.splitlines() if ln.startswith("w1 ")]
+
+
+def _run_argv(tmp_bundle, tmp_path, *extra):
+    config = tmp_path / "stub.toml"
+    config.write_text(STUB_CONFIG + "[emission_params]\n[decoder_params]\n")
+    argv = ["run", "--data-dir", str(tmp_bundle), "--config", str(config), "--out"]
+    return argv + [str(tmp_path / "o.csv"), "--expected-frames", "50", *extra]
+
+
+def test_cli_run_no_cache_leaves_no_cache(tmp_bundle, tmp_path):
+    assert main(_run_argv(tmp_bundle, tmp_path, "--no-cache")) == 0
+    assert not (tmp_bundle / "cache").exists()
+    assert main(_run_argv(tmp_bundle, tmp_path)) == 0
+    assert (tmp_bundle / "cache" / "match.pkl").is_file()
+
+
+def test_cli_run_refresh_cache_rebuilds_it(tmp_bundle, tmp_path, monkeypatch):
+    seen = []
+    real = cli.load_match
+    monkeypatch.setattr(cli, "load_match", lambda *a, **k: seen.append(k) or real(*a, **k))
+    assert main(_run_argv(tmp_bundle, tmp_path, "--refresh-cache")) == 0
+    assert main(_run_argv(tmp_bundle, tmp_path, "--no-cache")) == 0
+    assert main(_run_argv(tmp_bundle, tmp_path)) == 0
+    assert [(k["cache"], k["refresh"]) for k in seen] == [
+        (True, True),
+        (False, False),
+        (True, False),
+    ]
+
+
+def test_cli_run_cache_flags_are_exclusive(tmp_bundle, tmp_path):
+    with pytest.raises(SystemExit):
+        main(_run_argv(tmp_bundle, tmp_path, "--no-cache", "--refresh-cache"))

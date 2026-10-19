@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import pickle
 from pathlib import Path
 from xml.etree import ElementTree
@@ -23,6 +24,12 @@ from rondo.io.tags import read_tags
 
 GAME = "BAR-ATH"
 _CACHE_ASSETS = ("atd_raw", "atd_meta", "smart_tagging")
+CACHE_FORMAT = 1  # bump when MatchData or the parsing changes in a way versions do not show
+
+
+def cache_stamp() -> tuple:
+    """Code and library versions in the cache key: any change invalidates the cache."""
+    return (CACHE_FORMAT, importlib.metadata.version("rondo"), pd.__version__, np.__version__)
 
 
 def _official_frames() -> int:
@@ -51,7 +58,7 @@ def _clipped_blocks(n_frames: int) -> list[tuple[int, int, int]]:
 
 def _cache_key(paths: dict[str, Path], n_frames: int) -> tuple:
     stats = [(paths[a].stat().st_size, paths[a].stat().st_mtime_ns) for a in _CACHE_ASSETS]
-    return (n_frames, *stats)
+    return (cache_stamp(), n_frames, *stats)
 
 
 def _build(paths: dict[str, Path], n_frames: int) -> MatchData:
@@ -92,26 +99,39 @@ def _read_cache(cache_file: Path, key: tuple) -> MatchData | None:
     try:
         with open(cache_file, "rb") as handle:
             cached_key, cached = pickle.load(handle)
-    except (OSError, EOFError, ValueError, AttributeError, ImportError, pickle.UnpicklingError):
+    except (
+        OSError,
+        EOFError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        ImportError,
+        pickle.UnpicklingError,
+    ):  # e.g. a cache written by other library versions
         return None
     return cached if cached_key == key else None
 
 
 def load_match(
-    data_dir: Path | None = None, cache: bool = True, expected_frames: int | None = None
+    data_dir: Path | None = None,
+    cache: bool = True,
+    expected_frames: int | None = None,
+    refresh: bool = False,
 ) -> MatchData:
     """Load the bundle into C1 and validate every table.
 
     ``expected_frames`` is the number of video frames (default: the official 199,319); tests pass
     a smaller number for a tiny fixture bundle. With ``cache`` the result is pickled to
     ``<data_dir>/cache/match.pkl`` and reused while the three source files keep the same size and
-    modification time.
+    modification time and the same ``cache_stamp()``. ``refresh`` ignores an existing cache
+    (the match is built from the source files) and rewrites it; ``cache=False`` neither reads nor
+    writes it.
     """
     n_frames = _official_frames() if expected_frames is None else int(expected_frames)
     data_dir, paths = _paths(data_dir, _CACHE_ASSETS)
     key = _cache_key(paths, n_frames)
     cache_file = data_dir / "cache" / "match.pkl"
-    if cache:
+    if cache and not refresh:
         cached = _read_cache(cache_file, key)
         if cached is not None:
             return cached

@@ -1,5 +1,7 @@
 """Reproducibility: the same input gives a byte-identical submission, on every platform."""
 
+import subprocess
+
 import numpy as np
 import pandas as pd
 
@@ -127,12 +129,31 @@ def test_verify_repro_runs_twice_and_reports_identical(capsys, monkeypatch, tmp_
     config = tmp_path / "stub.toml"
     config.write_text(STUB_CONFIG + "[emission_params]\n[decoder_params]\n")
     monkeypatch.setattr(cli, "RUN_MODULE", "tests.repro_entry")
+    cache_file = tmp_bundle / "cache" / "match.pkl"
+    # A stale cache from earlier: run 1 must ignore it (cold) and rewrite it.
+    cache_file.parent.mkdir()
+    cache_file.write_bytes(b"stale")
+    calls = []
+    real_run = subprocess.run
+
+    def spy(argv, **kwargs):
+        done = real_run(argv, **kwargs)
+        calls.append((argv, cache_file.stat().st_mtime_ns, cache_file.read_bytes()))
+        return done
+
+    monkeypatch.setattr(cli.subprocess, "run", spy)
     argv = ["verify-repro", "--data-dir", str(tmp_bundle), "--config", str(config)]
     assert cli.main(argv + ["--expected-frames", "50", "--validate-rows", "50"]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 3 and lines[-1] == "IDENTICAL"
     first, second = (line.split()[-1] for line in lines[:2])
     assert first == second and len(first) == 64
+
+    (cold, after_cold, cold_bytes), (warm, after_warm, warm_bytes) = calls
+    assert "--refresh-cache" in cold and "--no-cache" not in cold  # built from the source files
+    assert "--refresh-cache" not in warm and "--no-cache" not in warm
+    assert cold_bytes != b"stale"  # run 1 rebuilt the cache ...
+    assert (after_warm, warm_bytes) == (after_cold, cold_bytes)  # ... and run 2 only read it
 
 
 def test_verify_repro_reports_a_failed_run(capsys, monkeypatch, tmp_path):
