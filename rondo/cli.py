@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import subprocess
+import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -13,10 +17,11 @@ from rondo.io.load import check_bundle, load_match
 from rondo.pipeline import run as run_pipeline
 from rondo.post import summarize, validate_official, write_submission
 
-DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "default.toml"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = REPO_ROOT / "configs" / "default.toml"
+RUN_MODULE = "rondo.cli"  # verify-repro runs ``python -m RUN_MODULE run ...`` in fresh processes
 LATER = {
     "label": "Task 14",
-    "verify-repro": "Task 7",
 }
 
 
@@ -54,6 +59,40 @@ def _run(args: argparse.Namespace) -> int:
     print(f"sha256: {digest}")
     print("validator: ok" if verdict is None else f"validator: FAILED ({verdict})")
     return 0 if verdict is None else 1
+
+
+def _verify_repro(args: argparse.Namespace) -> int:
+    """``rondo run`` twice, each in a fresh process, into two files; compare their SHA-256."""
+    base = [sys.executable, "-m", RUN_MODULE, "run", "--config", str(Path(args.config).resolve())]
+    if args.data_dir:
+        base += ["--data-dir", str(Path(args.data_dir).resolve())]
+    for flag, value in (
+        ("--expected-frames", args.expected_frames),
+        ("--validate-rows", args.validate_rows),
+    ):
+        if value:
+            base += [flag, str(value)]
+    digests = []
+    with tempfile.TemporaryDirectory(prefix="rondo-repro-", ignore_cleanup_errors=True) as tmp:
+        for run in (1, 2):
+            out = Path(tmp) / f"run{run}" / "team-rondo.csv"
+            done = subprocess.run(
+                [*base, "--out", str(out)],
+                check=False,
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            if done.returncode != 0 or not out.is_file():
+                reason = (done.stderr.strip().splitlines() or ["no output"])[-1]
+                print(f"run {run}: failed (exit {done.returncode}): {reason}")
+                return 1
+            digests.append(hashlib.sha256(out.read_bytes()).hexdigest())
+    print(f"run 1 sha256: {digests[0]}")
+    print(f"run 2 sha256: {digests[1]}")
+    same = digests[0] == digests[1]
+    print("IDENTICAL" if same else "DIFFERENT")
+    return 0 if same else 1
 
 
 def _score(args: argparse.Namespace) -> int:
@@ -123,12 +162,21 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--validate-rows", type=int)
     run.set_defaults(handler=_run)
 
+    repro = sub.add_parser("verify-repro", help="run twice in fresh processes, compare SHA-256")
+    repro.add_argument("--data-dir")
+    repro.add_argument("--config", default=str(DEFAULT_CONFIG))
+    repro.add_argument("--expected-frames", type=int, help="as for run (small test bundles)")
+    repro.add_argument("--validate-rows", type=int, help="as for run (small test bundles)")
+    repro.set_defaults(handler=_verify_repro)
+
     score = sub.add_parser("score", help="official scores on every validation window")
     score.add_argument("csv", help="a full-length frame,label file")
     score.add_argument("--data-dir", help="hand-labelled windows are read from <data-dir>/labels")
     score.add_argument("--windows", nargs="+", help="score only these windows (default: all)")
     score.add_argument("--bootstrap", type=int, default=0, help="bootstrap draws, e.g. 1000")
-    score.add_argument("--result", help="also write results/YYYY-MM-DD-name-topic.md")
+    score.add_argument(
+        "--result", help="also write a Markdown results file, YYYY-MM-DD-name-topic.md"
+    )
     score.add_argument("--owner", help="name written in the results file")
     score.add_argument("--notes", default="", help="notes written in the results file")
     score.set_defaults(handler=_score)

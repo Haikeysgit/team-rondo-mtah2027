@@ -42,7 +42,7 @@ def test_cli_run_fails_when_validator_fails(tmp_bundle, tmp_path):
     assert main(argv) == 1
 
 
-@pytest.mark.parametrize("command", ["label", "verify-repro"])
+@pytest.mark.parametrize("command", ["label"])
 def test_cli_later_commands_return_2(command, capsys):
     assert main([command]) == 2
     assert "available once Task" in capsys.readouterr().out
