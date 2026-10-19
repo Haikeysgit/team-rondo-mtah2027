@@ -18,12 +18,11 @@ from dataclasses import dataclass, fields
 import numpy as np
 import pandas as pd
 
-from rondo.contracts import Meta
+from rondo.contracts import Meta, is_restart_code
 from rondo.registry import register_decoder
 
 LABELS = ("H", "A", "D")  # state order; ties go to the earlier state
 H, A, D = 0, 1, 2
-RESTART_CODE = "SET PIECES"
 MIN_PROB = 1e-9
 NO_ANCHOR = -1
 
@@ -94,8 +93,7 @@ def _restart_anchor(tags: pd.DataFrame, n_frames: int) -> np.ndarray:
     Windows are painted in start order, so where two overlap the later one wins.
     """
     anchor = np.full(n_frames, NO_ANCHOR, dtype=np.int8)
-    codes = tags["code"].astype("object").map(lambda code: str(code).strip().upper())
-    restarts = tags[(codes == RESTART_CODE) & tags["team"].isin(["H", "A"])]
+    restarts = tags[is_restart_code(tags["code"]) & tags["team"].isin(["H", "A"])]
     for start, end, team in sorted(
         zip(restarts["start_frame"], restarts["end_frame"], restarts["team"], strict=True)
     ):

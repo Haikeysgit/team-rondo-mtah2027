@@ -7,7 +7,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from rondo.contracts import MatchData
+from rondo.contracts import MatchData, is_restart_code
 from rondo.registry import register_signal
 
 # The tag's team is the team performing the event, which is not always the team with the ball.
@@ -28,7 +28,6 @@ POSSESSION_SIDE: dict[str, Literal["same", "other", "none"]] = {
     "GOALS": "none",
 }
 
-RESTART_CODE = "SET PIECES"
 _TEAM_CODE = {"H": 1, "A": 2}
 _TEAM_NAME = np.array([None, "H", "A"], dtype=object)
 
@@ -85,7 +84,7 @@ def tag_restarts(match: MatchData) -> pd.DataFrame:
     """``tag_restart_window`` over each ``SET PIECES`` window; ``tag_restart_team`` its team."""
     n = match.meta.n_frames
     tags = match.tags
-    rows = tags[_normalise(tags["code"]) == RESTART_CODE.casefold()].reset_index(drop=True)
+    rows = tags[is_restart_code(tags["code"])].reset_index(drop=True)
     start, end, length = _intervals(match, rows)
     window = _paint(n, start, end, length, np.ones(len(rows), dtype=np.int8)) > 0
     team = _paint(n, start, end, length, _teams(rows))
