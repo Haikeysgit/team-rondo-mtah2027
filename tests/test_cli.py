@@ -42,10 +42,26 @@ def test_cli_run_fails_when_validator_fails(tmp_bundle, tmp_path):
     assert main(argv) == 1
 
 
-@pytest.mark.parametrize("command", ["label"])
-def test_cli_later_commands_return_2(command, capsys):
-    assert main([command]) == 2
-    assert "available once Task" in capsys.readouterr().out
+def test_cli_rejects_unknown_arguments():
+    with pytest.raises(SystemExit):
+        main(["check", "--no-such-flag"])
+
+
+def test_cli_label_requires_window_start_and_end():
+    with pytest.raises(SystemExit):
+        main(["label", "--window", "w1", "--start", "10"])  # no --end
+
+
+def test_cli_label_calls_the_labeltool(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run(data_dir, window, start, end):
+        seen.update(data_dir=data_dir, window=window, start=start, end=end)
+
+    monkeypatch.setattr("rondo.labeltool.app.run", fake_run)
+    argv = ["label", "--data-dir", str(tmp_path), "--window", "w1", "--start", "10", "--end", "20"]
+    assert main(argv) == 0
+    assert seen == {"data_dir": tmp_path, "window": "w1", "start": 10, "end": 20}
 
 
 def test_default_config_is_valid_toml():
@@ -143,3 +159,21 @@ def test_cli_run_refresh_cache_rebuilds_it(tmp_bundle, tmp_path, monkeypatch):
 def test_cli_run_cache_flags_are_exclusive(tmp_bundle, tmp_path):
     with pytest.raises(SystemExit):
         main(_run_argv(tmp_bundle, tmp_path, "--no-cache", "--refresh-cache"))
+
+
+def test_cli_score_reports_a_bad_window_file_without_a_traceback(capsys, tmp_path):
+    (tmp_path / "labels").mkdir()
+    (tmp_path / "labels" / "w1.csv").write_text("frame,label\n0,H\n")
+    assert main(["score", str(BASELINE), "--data-dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "w1.csv" in out and "Traceback" not in out
+
+
+def test_cli_score_reports_clashing_windows_without_a_traceback(capsys, tmp_path):
+    (tmp_path / "labels").mkdir()
+    for name, label in (("w1", "H"), ("w2", "A")):
+        labels = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+        labels.iloc[30000:30500] = label
+        labels.to_frame().reset_index().to_csv(tmp_path / "labels" / f"{name}.csv", index=False)
+    assert main(["score", str(BASELINE), "--data-dir", str(tmp_path)]) == 1
+    assert "disagree" in capsys.readouterr().out

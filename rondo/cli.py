@@ -20,9 +20,6 @@ from rondo.post import summarize, validate_official, write_submission
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = REPO_ROOT / "configs" / "default.toml"
 RUN_MODULE = "rondo.cli"  # verify-repro runs ``python -m RUN_MODULE run ...`` in fresh processes
-LATER = {
-    "label": "Task 14",
-}
 
 
 def _data_dir(value: str | None) -> Path | None:
@@ -112,7 +109,11 @@ def _score(args: argparse.Namespace) -> int:
     if args.result and not args.owner:
         _parser().error("--result needs --owner")
     data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
-    windows = load_windows(data_dir)
+    try:
+        windows = load_windows(data_dir)
+    except ValueError as error:
+        print(f"invalid window: {error}")
+        return 1
     n_frames = len(windows["public"])
     if args.windows:
         unknown = sorted(set(args.windows) - set(windows))
@@ -126,7 +127,11 @@ def _score(args: argparse.Namespace) -> int:
         print(f"invalid submission: {error}")
         return 1
 
-    table = score_all(pred, windows, bootstrap=args.bootstrap)
+    try:
+        table = score_all(pred, windows, bootstrap=args.bootstrap)
+    except ValueError as error:  # two windows label the same frame differently
+        print(f"invalid windows: {error}")
+        return 1
     print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
     for row in table.itertuples(index=False):
         interval = (
@@ -147,12 +152,13 @@ def _score(args: argparse.Namespace) -> int:
     return 0
 
 
-def _later(command: str):
-    def handler(_: argparse.Namespace) -> int:
-        print(f"rondo {command} is available once {LATER[command]} is merged")
-        return 2
+def _label(args: argparse.Namespace) -> int:
+    from rondo import config as runtime_config
+    from rondo.labeltool.app import run as run_labeltool
 
-    return handler
+    data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+    run_labeltool(data_dir, args.window, args.start, args.end)
+    return 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -198,17 +204,19 @@ def _parser() -> argparse.ArgumentParser:
     score.add_argument("--notes", default="", help="notes written in the results file")
     score.set_defaults(handler=_score)
 
-    for command, task in LATER.items():
-        later = sub.add_parser(command, help=f"available once {task} is merged")
-        later.add_argument("rest", nargs="*")
-        later.set_defaults(handler=_later(command))
+    label = sub.add_parser("label", help="open the labelling window on a stretch of real video")
+    label.add_argument("--data-dir")
+    label.add_argument("--window", required=True, help="name for the output files, e.g. window1")
+    label.add_argument("--start", type=int, required=True, help="first frame of the stretch")
+    label.add_argument(
+        "--end", type=int, required=True, help="last frame of the stretch (inclusive)"
+    )
+    label.set_defaults(handler=_label)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args, extra = _parser().parse_known_args(argv)
-    if extra and args.command not in LATER:
-        _parser().error(f"unrecognised arguments: {' '.join(extra)}")
+    args = _parser().parse_args(argv)
     return args.handler(args)
 
 

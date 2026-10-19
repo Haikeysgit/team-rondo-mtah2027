@@ -258,3 +258,32 @@ def test_labels_to_codes():
     assert codes.tolist() == [0, 1, 2, 3, 0]
     with pytest.raises(ContractError, match="label"):
         labels_to_codes(pd.Series(["H", "Q"]))
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        ("SET PIECES", True),
+        ("set pieces", True),
+        ("  Set Pieces ", True),
+        ("BUILD UP", False),
+        ("SET PIECE", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_restart_code(code, expected):
+    import pandas as pd
+
+    from rondo.contracts import RESTART_CODE, is_restart_code
+
+    assert RESTART_CODE == "SET PIECES"
+    assert is_restart_code(pd.Series([code], dtype="object")).tolist() == [expected]
+
+
+def test_restart_code_has_one_definition():
+    from rondo.decoder import viterbi
+    from rondo.signals import tags
+
+    assert not hasattr(viterbi, "RESTART_CODE")
+    assert not hasattr(tags, "RESTART_CODE")

@@ -9,33 +9,64 @@ Restart anchors: Smart Tagging marks each restart (``SET PIECES``) with a ~5 s w
 restarting team. Inside such a window, leaving a dead ball towards that team is cheaper by
 ``restart_bonus`` and towards the other team dearer by the same amount. A restart tag with no
 team (throw-ins are tagged ``N/A``) changes nothing.
+
+Known limitation: after a stoppage with no team on the restart tag, the team that resumes play is
+decided by the evidence alone, and an exact tie goes to ``H`` (the earlier state).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields
 
 import numpy as np
 import pandas as pd
 
-from rondo.contracts import Meta
+from rondo.contracts import Meta, is_restart_code
 from rondo.registry import register_decoder
 
 LABELS = ("H", "A", "D")  # state order; ties go to the earlier state
 H, A, D = 0, 1, 2
-RESTART_CODE = "SET PIECES"
 MIN_PROB = 1e-9
 NO_ANCHOR = -1
 
 
 @dataclass(frozen=True)
 class ViterbiParams:
-    """Transition costs, in the same log-probability units as the emissions."""
+    """Transition costs, in the same log-probability units as the emissions.
+
+    Checked on construction: every cost is finite and >= 0, ``restart_bonus`` stays below
+    ``dead_exit_cost`` (so no exit is free), and ``switch_cost`` stays below
+    ``max_switch_cost()``, the price of the cheapest detour through one dead frame.
+    """
 
     switch_cost: float = 8.0  # H <-> A
     dead_entry_cost: float = 25.0  # H or A -> D
     dead_exit_cost: float = 25.0  # D -> H or A
     restart_bonus: float = 6.0  # D -> the tagged team, inside its restart window
+
+    def __post_init__(self) -> None:
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"viterbi {field.name} must be finite and >= 0, got {value}")
+        if self.restart_bonus >= self.dead_exit_cost:
+            raise ValueError(
+                f"viterbi restart_bonus ({self.restart_bonus}) must be below dead_exit_cost "
+                f"({self.dead_exit_cost}), or leaving a dead ball becomes free"
+            )
+        if self.switch_cost >= self.max_switch_cost():
+            raise ValueError(
+                f"viterbi switch_cost ({self.switch_cost}) must be below "
+                f"{self.max_switch_cost():.2f} (dead_entry_cost + dead_exit_cost - restart_bonus "
+                f"+ log({MIN_PROB:g})), or a team change can route through a one-frame D"
+            )
+
+    def max_switch_cost(self) -> float:
+        """Above this, H -> D -> A over a single frame of certain ``D`` evidence (whose gain over
+        a clipped team probability is ``-log(MIN_PROB)``, about 20.7) beats a direct H -> A inside
+        a restart window, leaving a phantom one-frame stoppage at the team change."""
+        return self.dead_entry_cost + self.dead_exit_cost - self.restart_bonus + math.log(MIN_PROB)
 
     @classmethod
     def from_dict(cls, params: dict) -> ViterbiParams:
@@ -94,8 +125,7 @@ def _restart_anchor(tags: pd.DataFrame, n_frames: int) -> np.ndarray:
     Windows are painted in start order, so where two overlap the later one wins.
     """
     anchor = np.full(n_frames, NO_ANCHOR, dtype=np.int8)
-    codes = tags["code"].astype("object").map(lambda code: str(code).strip().upper())
-    restarts = tags[(codes == RESTART_CODE) & tags["team"].isin(["H", "A"])]
+    restarts = tags[is_restart_code(tags["code"]) & tags["team"].isin(["H", "A"])]
     for start, end, team in sorted(
         zip(restarts["start_frame"], restarts["end_frame"], restarts["team"], strict=True)
     ):
