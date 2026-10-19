@@ -297,6 +297,19 @@ def validate_labels(df: pd.DataFrame, meta: Meta, allow_x: bool) -> None:
         )
 
 
+RESTART_CODE = "SET PIECES"
+
+
+def is_restart_code(codes: pd.Series) -> pd.Series:
+    """True where a Smart Tagging code is a restart, ignoring case and surrounding spaces."""
+    target = RESTART_CODE.casefold()
+    return (
+        codes.astype("object")
+        .map(lambda code: isinstance(code, str) and code.strip().casefold() == target)
+        .astype(bool)
+    )  # bool even when empty, so it masks rows instead of selecting columns
+
+
 def labels_to_codes(labels: pd.Series) -> np.ndarray:
     """Labels to int8 codes in the official order (``H=0, A=1, D=2, X=3``)."""
     index = {label: code for code, label in enumerate(kit.pm.LABELS)}
