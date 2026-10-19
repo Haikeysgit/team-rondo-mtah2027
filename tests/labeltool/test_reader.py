@@ -1,3 +1,5 @@
+import tracemalloc
+
 import cv2
 import numpy as np
 import pytest
@@ -43,6 +45,22 @@ def test_frame_reader_rereading_the_same_frame_is_stable(video_path):
     first = reader.read(150)
     second = reader.read(150)
     np.testing.assert_array_equal(first, second)
+
+
+def test_frame_reader_keeps_no_decoded_images_per_checkpoint(video_path, monkeypatch):
+    # The real video is 1920x1080 with ~800 checkpoints: keeping each image would cost ~5 GB.
+    # Here 30 checkpoints of a 64x64 frame would hold ~370 KB; allow less than one frame.
+    monkeypatch.setattr("rondo.labeltool.reader.CHECKPOINT_INTERVAL", 10)
+    one_frame = SIZE[0] * SIZE[1] * 3
+    tracemalloc.start()
+    try:
+        reader = FrameReader(video_path, expected_frames=N_FRAMES)
+        held, _ = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert held < one_frame
+    for i in (0, 10, 155, 3, 299):
+        assert abs(round(reader.read(i).mean()) - (i % 256)) <= 4
 
 
 def test_frame_reader_wrong_expected_count_raises(video_path):

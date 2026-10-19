@@ -3,13 +3,14 @@
 OpenCV's ``CAP_PROP_POS_FRAMES`` seek is not reliable to a specific frame on most codecs: the
 decoder can only start cleanly at a keyframe, so seeking straight to an arbitrary frame and
 reading once can silently hand back the wrong image. ``FrameReader`` never does that: it only
-seeks to a position it has itself decoded and cached, verifies the seek landed there by comparing
-pixels, and then decodes forward frame by frame -- counting as it goes -- to the one actually
+seeks to a position it has itself decoded and fingerprinted, verifies the seek landed there by
+comparing pixel digests, and then decodes forward frame by frame -- counting as it goes -- to the one actually
 asked for. That makes the result exact by construction, not by trusting the codec.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Self
 
@@ -18,6 +19,11 @@ import numpy as np
 
 OFFICIAL_FRAMES = 199319
 CHECKPOINT_INTERVAL = 250  # frames (~10s @ 25fps): bounds the worst-case reseek/redecode cost
+
+
+def _digest(image: np.ndarray) -> bytes:
+    """A 16-byte fingerprint of a decoded image: equal pixels, equal digest."""
+    return hashlib.blake2b(image.tobytes(), digest_size=16).digest()
 
 
 class FrameReader:
@@ -29,7 +35,8 @@ class FrameReader:
 
     def __init__(self, video_path: Path, expected_frames: int = OFFICIAL_FRAMES):
         self.path = Path(video_path)
-        self._checkpoints: dict[int, np.ndarray] = {}
+        # Digests, not images: ~800 full-HD checkpoints would hold ~5 GB of pixels.
+        self._checkpoints: dict[int, bytes] = {}
         self._cap = cv2.VideoCapture(str(self.path))
         if not self._cap.isOpened():
             raise ValueError(f"could not open video: {self.path}")
@@ -39,7 +46,7 @@ class FrameReader:
             if not ok:
                 break
             if count % CHECKPOINT_INTERVAL == 0:
-                self._checkpoints[count] = image.copy()
+                self._checkpoints[count] = _digest(image)
             count += 1
         if count != expected_frames:
             raise ValueError(
@@ -53,15 +60,13 @@ class FrameReader:
         """The exact image for ``frame`` (BGR, as OpenCV decodes it)."""
         if not 0 <= frame < self.n_frames:
             raise ValueError(f"frame {frame} out of range 0..{self.n_frames - 1}")
-        if frame in self._checkpoints:
-            return self._checkpoints[frame].copy()
-
         checkpoint = (frame // CHECKPOINT_INTERVAL) * CHECKPOINT_INTERVAL
-        needs_seek = frame < self._pos or checkpoint > self._pos
-        if needs_seek and not self._verified_seek(checkpoint):
-            self._restart()  # this decode cannot be trusted to seek: read from the start
-
         image = None
+        if frame < self._pos or checkpoint > self._pos:
+            image = self._verified_seek(checkpoint)
+            if image is None:
+                self._restart()  # this decode cannot be trusted to seek: read from the start
+
         while self._pos <= frame:
             ok, image = self._cap.read()
             if not ok:
@@ -69,14 +74,15 @@ class FrameReader:
             self._pos += 1
         return image
 
-    def _verified_seek(self, checkpoint: int) -> bool:
-        """Try to land exactly on ``checkpoint``; True only once that is confirmed by pixels."""
+    def _verified_seek(self, checkpoint: int) -> np.ndarray | None:
+        """Land exactly on ``checkpoint`` and return its image, or ``None`` if the pixels show the
+        seek landed elsewhere."""
         self._cap.set(cv2.CAP_PROP_POS_FRAMES, checkpoint)
         ok, image = self._cap.read()
-        if ok and np.array_equal(image, self._checkpoints[checkpoint]):
+        if ok and _digest(image) == self._checkpoints[checkpoint]:
             self._pos = checkpoint + 1
-            return True
-        return False
+            return image
+        return None
 
     def _restart(self) -> None:
         """Reopen the video at frame 0, for when a seek cannot be trusted."""
