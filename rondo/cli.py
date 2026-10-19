@@ -15,7 +15,6 @@ from rondo.post import summarize, validate_official, write_submission
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "default.toml"
 LATER = {
-    "label": "Task 14",
     "verify-repro": "Task 7",
 }
 
@@ -106,6 +105,15 @@ def _score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _label(args: argparse.Namespace) -> int:
+    from rondo import config as runtime_config
+    from rondo.labeltool.app import run as run_labeltool
+
+    data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+    run_labeltool(data_dir, args.window, args.start, args.end)
+    return 0
+
+
 def _later(command: str):
     def handler(_: argparse.Namespace) -> int:
         print(f"rondo {command} is available once {LATER[command]} is merged")
@@ -140,6 +148,15 @@ def _parser() -> argparse.ArgumentParser:
     score.add_argument("--owner", help="name written in the results file")
     score.add_argument("--notes", default="", help="notes written in the results file")
     score.set_defaults(handler=_score)
+
+    label = sub.add_parser("label", help="open the labelling window on a stretch of real video")
+    label.add_argument("--data-dir")
+    label.add_argument("--window", required=True, help="name for the output files, e.g. window1")
+    label.add_argument("--start", type=int, required=True, help="first frame of the stretch")
+    label.add_argument(
+        "--end", type=int, required=True, help="last frame of the stretch (inclusive)"
+    )
+    label.set_defaults(handler=_label)
 
     for command, task in LATER.items():
         later = sub.add_parser(command, help=f"available once {task} is merged")

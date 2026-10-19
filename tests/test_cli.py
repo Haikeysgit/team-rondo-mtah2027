@@ -42,10 +42,27 @@ def test_cli_run_fails_when_validator_fails(tmp_bundle, tmp_path):
     assert main(argv) == 1
 
 
-@pytest.mark.parametrize("command", ["label", "verify-repro"])
+@pytest.mark.parametrize("command", ["verify-repro"])
 def test_cli_later_commands_return_2(command, capsys):
     assert main([command]) == 2
     assert "available once Task" in capsys.readouterr().out
+
+
+def test_cli_label_requires_window_start_and_end():
+    with pytest.raises(SystemExit):
+        main(["label", "--window", "w1", "--start", "10"])  # no --end
+
+
+def test_cli_label_calls_the_labeltool(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run(data_dir, window, start, end):
+        seen.update(data_dir=data_dir, window=window, start=start, end=end)
+
+    monkeypatch.setattr("rondo.labeltool.app.run", fake_run)
+    argv = ["label", "--data-dir", str(tmp_path), "--window", "w1", "--start", "10", "--end", "20"]
+    assert main(argv) == 0
+    assert seen == {"data_dir": tmp_path, "window": "w1", "start": 10, "end": 20}
 
 
 def test_default_config_is_valid_toml():
