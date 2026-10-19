@@ -4,7 +4,12 @@ Every frame starts level between ``H`` and ``A``, with ``D`` ``alive_margin`` be
 alive unless something says otherwise. Evidence then adds to one label's score:
 
 - **Control**: the nearest player is within ``control_dist_m`` of a ball moving slower than
-  ``control_speed_ms`` (a pass in flight is nobody's control) -> ``control_weight`` to that team.
+  ``control_speed_ms`` (a pass in flight is nobody's control) -> ``control_weight`` to that team,
+  but only when the team keeps it: its run of control, passes between teammates included, spans
+  at least ``min_control_frames`` (2 s). The organisers' hint and our tactical analyst agree that
+  control means a few seconds on the ball; a touch, block or deflection gives no evidence at all,
+  so it cannot flip possession. The run is judged on the whole match, so its evidence still starts
+  at the frame the team gained the ball, where the decoder places the switch.
 - **Ball out of bounds** -> ``out_weight`` to ``D``. Control is not counted while the ball is out.
 - **Stoppage**: players are slow on average (``team_speed_mean_m_s < stopped_speed_ms``) *and*
   the ball is not moving like play (missing, slower than ``still_ball_ms``, or inside a Smart
@@ -48,6 +53,8 @@ class RulesParams:
     control_dist_m: float = 1.5
     control_speed_ms: float = 8.0
     control_weight: float = 2.0
+    min_control_frames: int = 50
+    max_control_gap_frames: int = 75
     out_weight: float = 5.0
     stopped_speed_ms: float = 1.0
     still_ball_ms: float = 0.5
@@ -59,6 +66,27 @@ class RulesParams:
     def __post_init__(self) -> None:
         if self.temperature <= 0:
             raise ValueError(f"rules_v0 temperature must be > 0, got {self.temperature}")
+
+
+def _sustained(control: np.ndarray, team: np.ndarray, min_frames: int, max_gap: int) -> np.ndarray:
+    """True on control frames that belong to a team's sustained run.
+
+    A run is one team's control frames with no control by the other team between them and no gap
+    longer than ``max_gap`` frames (passes between teammates and short tracking losses do not end
+    it). It is sustained when it spans at least ``min_frames``, first to last control frame.
+    """
+    idx = np.flatnonzero(control)
+    keep = np.zeros(len(control), dtype=bool)
+    if len(idx) == 0:
+        return keep
+    teams = team[idx]
+    new_run = np.ones(len(idx), dtype=bool)
+    new_run[1:] = (teams[1:] != teams[:-1]) | (np.diff(idx) > max_gap + 1)
+    run_id = np.cumsum(new_run) - 1
+    starts = idx[new_run]
+    ends = np.maximum.reduceat(idx, np.flatnonzero(new_run))
+    keep[idx] = (ends - starts + 1)[run_id] >= min_frames
+    return keep
 
 
 @register_emission("rules_v0")
@@ -91,6 +119,7 @@ class RulesV0:
 
         # NaN speed counts as slow here: the ball is seen, only its speed is unknown (track edges).
         control = ~missing & ~out & (dist <= p.control_dist_m) & ~(speed >= p.control_speed_ms)
+        control &= _sustained(control, nearest, p.min_control_frames, p.max_control_gap_frames)
         for team, label in ((H, "H"), (A, "A")):
             scores[:, team] += p.control_weight * (control & (nearest == label))
             scores[:, team] += p.prior_weight * (prior == label)

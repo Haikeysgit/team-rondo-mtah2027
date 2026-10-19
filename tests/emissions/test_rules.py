@@ -57,15 +57,47 @@ def probs(row: dict, **params) -> tuple[float, float, float]:
     return out["p_H"], out["p_A"], out["p_D"]
 
 
+HELD = 60  # frames: longer than the default min_control_frames (50, 2 s)
+
+
+def held_probs(row: dict, **params) -> tuple[float, float, float]:
+    """Probabilities in the middle of ``HELD`` frames of ``row``: control needs a sustained run."""
+    out = predict(signals(*[row] * HELD), **params).iloc[HELD // 2]
+    return out["p_H"], out["p_A"], out["p_D"]
+
+
+def decode(rows: list[dict]) -> list[str]:
+    import rondo.decoder  # noqa: F401  (registers "viterbi")
+
+    table = signals(*rows)
+    meta = Meta(len(table), 25, (105.3, 68.0), [(1, 0, len(table) - 1)], "FC Barcelona", "Athletic")
+    no_tags = pd.DataFrame(
+        {
+            "start_frame": pd.Series([], dtype="int64"),
+            "end_frame": pd.Series([], dtype="int64"),
+            "code": pd.Series([], dtype="str"),
+            "team": pd.Series([], dtype="str"),
+            "type": pd.Series([], dtype="str"),
+            "half": pd.array([], dtype="Int8"),
+        }
+    )
+    return registry.DECODERS["viterbi"](predict(table), no_tags, meta, {})["label"].tolist()
+
+
+H_CONTROL = {"nearest_team": "H", "nearest_dist_m": 0.7, "ball_speed_ms": 2.0}
+A_CONTROL = {"nearest_team": "A", "nearest_dist_m": 0.7, "ball_speed_ms": 2.0}
+IN_FLIGHT = {"nearest_team": "H", "nearest_dist_m": 6.0, "ball_speed_ms": 14.0}
+
+
 # -- the plan's cases ----------------------------------------------------------------------------
 
 
 def test_a_controlled_ball_near_an_h_player_is_h():
-    assert probs({"nearest_team": "H", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0})[0] > 0.8
+    assert held_probs({"nearest_team": "H", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0})[0] > 0.8
 
 
 def test_a_controlled_ball_near_an_a_player_is_a():
-    assert probs({"nearest_team": "A", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0})[1] > 0.8
+    assert held_probs({"nearest_team": "A", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0})[1] > 0.8
 
 
 def test_a_ball_out_of_bounds_is_dead():
@@ -129,19 +161,55 @@ def test_the_tag_prior_leans_towards_its_team_without_deciding():
 
 def test_control_beats_an_opposing_tag_prior():
     row = {"nearest_team": "H", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0, "tag_team_prior": "A"}
-    p_h, p_a, _ = probs(row)
+    p_h, p_a, _ = held_probs(row)
     assert p_h > p_a
 
 
 def test_params_change_the_rules():
     row = {"nearest_team": "H", "nearest_dist_m": 2.5, "ball_speed_ms": 2.0}
-    assert probs(row)[0] < 0.6
-    assert probs(row, control_dist_m=3.0)[0] > 0.8
+    assert held_probs(row)[0] < 0.6
+    assert held_probs(row, control_dist_m=3.0)[0] > 0.8
 
 
 def test_a_higher_temperature_flattens_the_probabilities():
     row = {"nearest_team": "H", "nearest_dist_m": 0.8, "ball_speed_ms": 2.0}
-    assert probs(row, temperature=4.0)[0] < probs(row)[0]
+    assert held_probs(row, temperature=4.0)[0] < held_probs(row)[0]
+
+
+# -- sustained control (official proxy and our analyst: a few seconds on the ball) ---------------
+
+
+def test_a_brief_touch_gives_no_lean():
+    out = predict(signals(*[OPEN_PLAY] * 20, *[A_CONTROL] * 10, *[OPEN_PLAY] * 20))
+    touch = out.iloc[25]
+    assert abs(touch["p_H"] - touch["p_A"]) < 1e-9
+
+
+def test_a_brief_opponent_touch_does_not_flip_possession():
+    assert decode([H_CONTROL] * 150 + [A_CONTROL] * 12 + [H_CONTROL] * 150) == ["H"] * 312
+
+
+def test_a_held_ball_switches_possession_where_control_began():
+    assert decode([H_CONTROL] * 150 + [A_CONTROL] * 75) == ["H"] * 150 + ["A"] * 75
+
+
+def test_passes_between_teammates_keep_one_run():
+    rows = [H_CONTROL] * 20 + [IN_FLIGHT] * 15 + [H_CONTROL] * 20
+    out = predict(signals(*rows))
+    assert (out["p_H"].iloc[[0, 19, 35, 54]] > 0.8).all()
+
+
+def test_a_long_gap_splits_the_run():
+    rows = [H_CONTROL] * 30 + [BALL_MISSING] * 100 + [H_CONTROL] * 30
+    out = predict(signals(*rows))
+    assert abs(out["p_H"].iloc[10] - out["p_A"].iloc[10]) < 1e-9
+
+
+def test_min_control_frames_sets_what_counts_as_sustained():
+    out = predict(
+        signals(*[OPEN_PLAY] * 20, *[A_CONTROL] * 10, *[OPEN_PLAY] * 20), min_control_frames=5
+    )
+    assert out["p_A"].iloc[25] > 0.8
 
 
 # -- contract ------------------------------------------------------------------------------------
@@ -200,6 +268,7 @@ def test_a_misspelt_param_is_refused():
         {"stopped_weight": float("nan")},
         {"temperature": 0.0},
         {"prior_weight": float("inf")},
+        {"min_control_frames": -1},
     ],
 )
 def test_invalid_params_are_refused(params):
