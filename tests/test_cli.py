@@ -110,3 +110,21 @@ def test_cli_score_shows_a_dash_for_a_window_without_possessions(capsys, tmp_pat
     assert main(["score", str(BASELINE), "--data-dir", str(tmp_path), "--bootstrap", "10"]) == 0
     out = capsys.readouterr().out
     assert "nan" not in out and [ln for ln in out.splitlines() if ln.startswith("w1 ")]
+
+
+def test_cli_score_reports_a_bad_window_file_without_a_traceback(capsys, tmp_path):
+    (tmp_path / "labels").mkdir()
+    (tmp_path / "labels" / "w1.csv").write_text("frame,label\n0,H\n")
+    assert main(["score", str(BASELINE), "--data-dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "w1.csv" in out and "Traceback" not in out
+
+
+def test_cli_score_reports_clashing_windows_without_a_traceback(capsys, tmp_path):
+    (tmp_path / "labels").mkdir()
+    for name, label in (("w1", "H"), ("w2", "A")):
+        labels = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+        labels.iloc[30000:30500] = label
+        labels.to_frame().reset_index().to_csv(tmp_path / "labels" / f"{name}.csv", index=False)
+    assert main(["score", str(BASELINE), "--data-dir", str(tmp_path)]) == 1
+    assert "disagree" in capsys.readouterr().out

@@ -188,10 +188,12 @@ def test_load_windows_rejects_a_window_with_no_graded_frames(tmp_path):
         windows.load_windows(tmp_path)
 
 
-def test_load_windows_reserves_the_public_name(tmp_path):
+@pytest.mark.parametrize("name", ["public", "Public", "PUBLIC"])
+def test_load_windows_reserves_the_public_name_in_any_case(tmp_path, name):
+    # Windows file names are case-insensitive, so Public.csv must not slip through.
     public = windows.load_windows(None)["public"]
-    write_labels(tmp_path / "labels" / "public.csv", public)
-    with pytest.raises(ValueError, match="public"):
+    write_labels(tmp_path / "labels" / f"{name}.csv", public)
+    with pytest.raises(ValueError, match="reserved"):
         windows.load_windows(tmp_path)
 
 

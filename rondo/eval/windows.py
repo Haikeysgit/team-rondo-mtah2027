@@ -59,7 +59,7 @@ def load_windows(data_dir: Path | None) -> dict[str, pd.Series]:
     if labels_dir is None or not labels_dir.is_dir():
         return windows
     for path in sorted(labels_dir.glob("*.csv")):
-        if path.stem == PUBLIC:
+        if path.stem.casefold() == PUBLIC:  # Windows file names ignore case
             raise ValueError(
                 f"{path.name}: the name {PUBLIC!r} is reserved for the official window"
             )
