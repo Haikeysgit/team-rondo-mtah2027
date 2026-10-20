@@ -33,6 +33,29 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tags(args: argparse.Namespace) -> int:
+    from rondo import config as runtime_config
+    from rondo.eval import load_windows
+    from rondo.eval.tagcheck import tag_report
+
+    data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+    match = load_match(data_dir, expected_frames=args.expected_frames)
+    for key, value in tag_report(match, None).items():
+        if "vs_truth" not in key:  # per window, below
+            print(f"{key}: {'n/a' if value is None else value}")
+    for name, truth in load_windows(data_dir).items():
+        if len(truth) != match.meta.n_frames:
+            print(f"{name}: skipped ({len(truth)} frames, the match has {match.meta.n_frames})")
+            continue
+        report = tag_report(match, truth)
+        print(
+            f"{name}: restart team right {report['restart_team_vs_truth_pct']}% "
+            f"of {report['restart_team_vs_truth_n']}, "
+            f"team hint right {report['prior_vs_truth_pct']}%"
+        )
+    return 0
+
+
 def _run(args: argparse.Namespace) -> int:
     from rondo import config as runtime_config
 
@@ -215,6 +238,11 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--data-dir")
     check.add_argument("--expected-records", type=int)
     check.set_defaults(handler=_check)
+
+    tags = sub.add_parser("tags", help="how well Smart Tagging lines up with tracking and truth")
+    tags.add_argument("--data-dir")
+    tags.add_argument("--expected-frames", type=int)
+    tags.set_defaults(handler=_tags)
 
     run = sub.add_parser("run", help="build team-rondo.csv")
     run.add_argument("--data-dir")
