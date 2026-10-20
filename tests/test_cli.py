@@ -26,6 +26,15 @@ def test_cli_tags_prints_rates_and_no_rows(capsys, tmp_bundle):
     assert "\n0," not in out
 
 
+def test_cli_tags_against_a_labels_file(capsys, tmp_bundle, tmp_path):
+    labels = tmp_path / "pred.csv"
+    labels.write_text("frame,label\n" + "".join(f"{f},H\n" for f in range(50)))
+    argv = ["tags", "--data-dir", str(tmp_bundle), "--expected-frames", "50"]
+    assert main([*argv, "--against", str(labels)]) == 0
+    out = capsys.readouterr().out
+    assert "pred.csv: restart team right" in out and "public" not in out
+
+
 def test_cli_run_end_to_end(capsys, tmp_bundle, tmp_path):
     config = tmp_path / "stub.toml"
     config.write_text(STUB_CONFIG + "[emission_params]\n[decoder_params]\n")

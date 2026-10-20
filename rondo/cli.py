@@ -35,7 +35,7 @@ def _check(args: argparse.Namespace) -> int:
 
 def _tags(args: argparse.Namespace) -> int:
     from rondo import config as runtime_config
-    from rondo.eval import load_windows
+    from rondo.eval import load_windows, read_labels
     from rondo.eval.tagcheck import tag_report
 
     data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
@@ -43,7 +43,12 @@ def _tags(args: argparse.Namespace) -> int:
     for key, value in tag_report(match, None).items():
         if "vs_truth" not in key:  # per window, below
             print(f"{key}: {'n/a' if value is None else value}")
-    for name, truth in load_windows(data_dir).items():
+    if args.against:  # a stand-in judge, e.g. the official baseline, which never reads the tags
+        path = Path(args.against)
+        references = {path.name: read_labels(path, n_frames=match.meta.n_frames)}
+    else:
+        references = load_windows(data_dir)
+    for name, truth in references.items():
         if len(truth) != match.meta.n_frames:
             print(f"{name}: skipped ({len(truth)} frames, the match has {match.meta.n_frames})")
             continue
@@ -242,6 +247,7 @@ def _parser() -> argparse.ArgumentParser:
     tags = sub.add_parser("tags", help="how well Smart Tagging lines up with tracking and truth")
     tags.add_argument("--data-dir")
     tags.add_argument("--expected-frames", type=int)
+    tags.add_argument("--against", help="compare with this full-length frame,label file instead")
     tags.set_defaults(handler=_tags)
 
     run = sub.add_parser("run", help="build team-rondo.csv")
