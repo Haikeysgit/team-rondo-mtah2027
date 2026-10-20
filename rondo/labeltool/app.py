@@ -14,12 +14,15 @@ label at the current frame. ``u`` undoes the last mark. ``s`` saves. ``Esc`` qui
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pandas as pd
 
 from rondo import config, kit
+from rondo.contracts import MatchData
 from rondo.io.load import load_match
 from rondo.labeltool.expand import expand_transitions
 from rondo.labeltool.overlay import draw_overlay, load_homography
@@ -55,30 +58,74 @@ def _save(data_dir: Path, window: str, marks: dict[int, str], start: int, end: i
     print(f"saved {len(marks_df)} mark(s) to {marks_path} and {window}.csv")
 
 
-def run(data_dir: Path | None, window: str, start: int, end: int) -> None:
-    """Open the labelling window on ``[start, end]`` of the tactical video; blocks until closed."""
-    if start > end:
-        raise ValueError(f"start ({start}) must not be after end ({end})")
-    data_dir = Path(data_dir) if data_dir is not None else config.data_dir()
+@dataclass
+class Session:
+    """Everything the viewer needs, opened once: the match, the video and the homography.
+
+    Opening the video counts every frame (minutes on the full match), so a run of reviews shares
+    one session instead of opening its own.
+    """
+
+    match: MatchData
+    reader: FrameReader
+    matrices: np.ndarray
+    valid: np.ndarray
+
+    def __post_init__(self) -> None:
+        self.players_by_frame = {f: rows for f, rows in self.match.players.groupby("frame")}
+        self.ball = self.match.frames.set_index("frame")[["ball_x", "ball_y"]]
+
+    def close(self) -> None:
+        self.reader.close()
+
+
+def open_session(data_dir: Path) -> Session:
     match = load_match(data_dir)
     video_path = Path(kit.games.video_path(data_dir=str(data_dir)))
     reader = FrameReader(video_path, expected_frames=match.meta.n_frames)
     matrices, _, valid = load_homography(data_dir=str(data_dir))
-    players_by_frame = {f: rows for f, rows in match.players.groupby("frame")}
-    ball = match.frames.set_index("frame")[["ball_x", "ball_y"]]
+    return Session(match, reader, matrices, valid)
+
+
+def run(
+    data_dir: Path | None,
+    window: str,
+    start: int,
+    end: int,
+    *,
+    session: Session | None = None,
+    read_only: bool = False,
+) -> None:
+    """Open the labelling window on ``[start, end]`` of the tactical video; blocks until closed.
+
+    ``session``: reuse an open one (left open afterwards); by default one is opened and closed
+    here. ``read_only``: review mode, the save key writes nothing, so a review can never add a
+    window to ``labels/``.
+    """
+    if start > end:
+        raise ValueError(f"start ({start}) must not be after end ({end})")
+    data_dir = Path(data_dir) if data_dir is not None else config.data_dir()
+    owned = session is None
+    if owned:
+        session = open_session(data_dir)
+    match, reader = session.match, session.reader
 
     marks: dict[int, str] = {}
     history: list[int] = []  # frames marked, in order, for undo
     frame = start
-    win_name = f"rondo label - {window}"
+    win_name = f"rondo {'review' if read_only else 'label'} - {window}"
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
     print(__doc__.split("Keys:", 1)[1].strip())
+    if read_only:
+        print("review mode: marks are shown but never saved")
     try:
         while True:
             image = reader.read(frame)
-            players = players_by_frame.get(frame, match.players.iloc[0:0])
+            players = session.players_by_frame.get(frame, match.players.iloc[0:0])
+            ball = session.ball
             ball_xy = tuple(ball.loc[frame]) if frame in ball.index else None
-            homography = matrices[frame] if frame < len(valid) and valid[frame] else None
+            valid = session.valid
+            homography = session.matrices[frame] if frame < len(valid) and valid[frame] else None
             label = marks.get(frame, "?")
             hud = f"{window}  frame {frame}  [{start}-{end}]  mark={label}  marks={len(marks)}"
             cv2.imshow(win_name, draw_overlay(image, players, ball_xy, homography, hud))
@@ -98,10 +145,13 @@ def run(data_dir: Path | None, window: str, start: int, end: int) -> None:
                 marks[frame] = STEP_KEYS[key]
             elif key == KEY_UNDO and history:
                 del marks[history.pop()]
+            elif key == KEY_SAVE and read_only:
+                print("review mode: not saved")
             elif key == KEY_SAVE:
                 _save(data_dir, window, marks, start, end, match.meta.n_frames)
             elif key == KEY_QUIT:
                 break
     finally:
         cv2.destroyWindow(win_name)
-        reader.close()
+        if owned:
+            session.close()
