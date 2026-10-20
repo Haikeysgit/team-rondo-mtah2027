@@ -280,3 +280,18 @@ def test_cli_errors_warns_its_output_is_frame_level(capsys, tmp_path):
     truth.to_frame().reset_index().to_csv(pred_path, index=False)
     assert main(["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1"]) == 0
     assert "do not paste" in capsys.readouterr().out
+
+
+def test_cli_errors_names_the_teams_of_a_spurious_change(capsys, tmp_path):
+    truth = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
+    truth.iloc[30000:30600] = "H"
+    truth.iloc[30600:31000] = "A"
+    _write_window(tmp_path, "w1", truth)
+    pred = truth.copy()
+    pred.iloc[30600:31000] = "H"  # the H -> A change at 30600 is missed
+    pred.iloc[30200:30300] = "A"  # and a false A spell inside H's possession
+    pred_path = tmp_path / "pred.csv"
+    pred.to_frame().reset_index().to_csv(pred_path, index=False)
+    assert main(["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1"]) == 0
+    out = capsys.readouterr().out
+    assert "spurious H -> A" in out and "nan" not in out
