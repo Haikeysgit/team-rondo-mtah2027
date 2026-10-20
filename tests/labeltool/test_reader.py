@@ -79,3 +79,43 @@ def test_frame_reader_rejects_out_of_range_frames(video_path):
 def test_frame_reader_rejects_a_missing_file(tmp_path):
     with pytest.raises(ValueError):
         FrameReader(tmp_path / "nope.mp4", expected_frames=10)
+
+
+# -- the frame index: count the video once, then reopen in seconds ------------------------------
+
+
+def test_reopening_with_an_index_skips_the_count(video_path, tmp_path, monkeypatch):
+    index = tmp_path / "video_index.json"
+    FrameReader(video_path, expected_frames=N_FRAMES, index_path=index)
+    assert index.is_file()
+
+    def no_scan(*args, **kwargs):
+        raise AssertionError("the video was decoded again")
+
+    monkeypatch.setattr("rondo.labeltool.reader._scan", no_scan)
+    reader = FrameReader(video_path, expected_frames=N_FRAMES, index_path=index)
+    for i in (299, 0, 150, 1, 249, 250):
+        assert abs(round(reader.read(i).mean()) - (i % 256)) <= 4
+
+
+def test_an_index_for_another_file_is_not_trusted(tmp_path):
+    index = tmp_path / "video_index.json"
+    path = tmp_path / "v.avi"
+    _make_video(path, n_frames=60)
+    FrameReader(path, expected_frames=60, index_path=index)
+    _make_video(path, n_frames=80)  # same path, a different file
+    with pytest.raises(ValueError):
+        FrameReader(path, expected_frames=60, index_path=index)
+
+
+def test_a_wrong_count_is_never_written_to_the_index(video_path, tmp_path):
+    index = tmp_path / "video_index.json"
+    with pytest.raises(ValueError):
+        FrameReader(video_path, expected_frames=N_FRAMES + 1, index_path=index)
+    assert not index.exists()
+
+
+def test_the_count_reports_progress(video_path):
+    seen = []
+    FrameReader(video_path, expected_frames=N_FRAMES, progress=seen.append)
+    assert seen and seen[-1] == N_FRAMES and seen == sorted(seen)
