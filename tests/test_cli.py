@@ -18,6 +18,14 @@ def test_cli_check_prints_no_rows(capsys, tmp_bundle):
     assert "n_records: 50" in out and "records" in out and "\n0," not in out
 
 
+def test_cli_tags_prints_rates_and_no_rows(capsys, tmp_bundle):
+    assert main(["tags", "--data-dir", str(tmp_bundle), "--expected-frames", "50"]) == 0
+    out = capsys.readouterr().out
+    assert "restart_windows:" in out and "prior_coverage_graded_pct:" in out
+    assert "public: skipped" in out  # the public window is full-length, the bundle is not
+    assert "\n0," not in out
+
+
 def test_cli_run_end_to_end(capsys, tmp_bundle, tmp_path):
     config = tmp_path / "stub.toml"
     config.write_text(STUB_CONFIG + "[emission_params]\n[decoder_params]\n")
