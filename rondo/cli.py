@@ -182,6 +182,7 @@ def _errors(args: argparse.Namespace) -> int:
         return 1
 
     moments = error_moments(pred, truth)
+    print("frame-level output from the match data: read it, do not paste it into an AI chat")
     for status in ("missed", "spurious", "late"):
         print(f"{status}: {int((moments['status'] == status).sum())}")
 
@@ -191,13 +192,18 @@ def _errors(args: argparse.Namespace) -> int:
         print(f"{format_timestamp(row.frame)}  frame {row.frame:>7}  {row.status:<8} {change}")
 
     if args.play:
-        from rondo.labeltool.app import run as run_labeltool
+        from rondo.labeltool import app
 
         n_frames = len(truth)
-        for row in top.itertuples(index=False):
-            start = max(0, row.frame - PLAY_MARGIN_FRAMES)
-            end = min(n_frames - 1, row.frame + PLAY_MARGIN_FRAMES)
-            run_labeltool(data_dir, f"err_{row.status}_{row.frame}", start, end)
+        session = app.open_session(data_dir)  # the video is opened and counted once for all
+        try:
+            for row in top.itertuples(index=False):
+                start = max(0, row.frame - PLAY_MARGIN_FRAMES)
+                end = min(n_frames - 1, row.frame + PLAY_MARGIN_FRAMES)
+                window = f"err_{row.status}_{row.frame}"
+                app.run(data_dir, window, start, end, session=session, read_only=True)
+        finally:
+            session.close()
     return 0
 
 
