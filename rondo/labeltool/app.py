@@ -82,7 +82,18 @@ class Session:
 def open_session(data_dir: Path) -> Session:
     match = load_match(data_dir)
     video_path = Path(kit.games.video_path(data_dir=str(data_dir)))
-    reader = FrameReader(video_path, expected_frames=match.meta.n_frames)
+    n = match.meta.n_frames
+    index = Path(data_dir) / "cache" / "tactical_video_index.json"
+    if not index.is_file():
+        print(
+            "first open: counting every video frame once (can take 15-35 min); later opens skip it"
+        )
+    reader = FrameReader(
+        video_path,
+        expected_frames=n,
+        index_path=index,
+        progress=lambda done: print(f"  counted {done:,} / {n:,} frames", flush=True),
+    )
     matrices, _, valid = load_homography(data_dir=str(data_dir))
     return Session(match, reader, matrices, valid)
 
