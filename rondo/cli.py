@@ -216,7 +216,11 @@ def _errors(args: argparse.Namespace) -> int:
 
     top = moments.head(20)
     for row in top.itertuples(index=False):
-        change = f"{row.gt_from or row.pred_from} -> {row.gt_to or row.pred_to}"
+        # a spurious row has no truth side; missing values read as NaN once rows are mixed
+        from_, to = (
+            (row.pred_from, row.pred_to) if pd.isna(row.gt_from) else (row.gt_from, row.gt_to)
+        )
+        change = f"{from_} -> {to}"
         print(f"{format_timestamp(row.frame)}  frame {row.frame:>7}  {row.status:<8} {change}")
 
     if args.play:
