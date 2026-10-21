@@ -295,3 +295,29 @@ def test_cli_errors_names_the_teams_of_a_spurious_change(capsys, tmp_path):
     assert main(["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1"]) == 0
     out = capsys.readouterr().out
     assert "spurious H -> A" in out and "nan" not in out
+
+
+def _marks(tmp_path, text):
+    marks = tmp_path / "labels" / "marks"
+    marks.mkdir(parents=True, exist_ok=True)
+    (marks / "w1_marks.csv").write_text(text)
+
+
+def test_cli_rebuild_writes_the_window_from_edited_marks(capsys, tmp_path):
+    _marks(tmp_path, "frame,label\n40000,H\n40100,A\n40200,D\n")
+    argv = ["rebuild", "--window", "w1", "--start", "40000", "--end", "40299"]
+    assert main([*argv, "--data-dir", str(tmp_path)]) == 0
+    labels = pd.read_csv(tmp_path / "labels" / "w1.csv")["label"]
+    assert len(labels) == 199319
+    assert labels.iloc[40000:40100].eq("H").all() and labels.iloc[40100:40200].eq("A").all()
+    assert labels.iloc[40200:40300].eq("D").all() and labels.iloc[40300] == "X"
+    assert "rebuilt w1.csv from 3 mark(s)" in capsys.readouterr().out
+
+
+def test_cli_rebuild_reports_bad_marks_without_a_traceback(capsys, tmp_path):
+    _marks(tmp_path, "frame,label\n40000,H\n40100,B\n")
+    argv = ["rebuild", "--window", "w1", "--start", "40000", "--end", "40299"]
+    assert main([*argv, "--data-dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "w1_marks.csv" in out and "Traceback" not in out
+    assert not (tmp_path / "labels" / "w1.csv").exists()

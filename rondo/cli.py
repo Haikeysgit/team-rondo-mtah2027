@@ -180,6 +180,24 @@ def _score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rebuild(args: argparse.Namespace) -> int:
+    """Rewrite ``labels/<window>.csv`` from its marks file, e.g. after fixing a mark by hand."""
+    from rondo import config as runtime_config
+    from rondo.labeltool.expand import expand_transitions
+
+    data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+    marks_path = data_dir / "labels" / "marks" / f"{args.window}_marks.csv"
+    try:
+        marks = pd.read_csv(marks_path).sort_values("frame", kind="stable")
+        labels = expand_transitions(marks, args.start, args.end)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"not rebuilt: {marks_path}: {error}")
+        return 1
+    labels.to_csv(data_dir / "labels" / f"{args.window}.csv")
+    print(f"rebuilt {args.window}.csv from {len(marks)} mark(s)")
+    return 0
+
+
 def _label(args: argparse.Namespace) -> int:
     from rondo import config as runtime_config
     from rondo.labeltool.app import run as run_labeltool
@@ -287,6 +305,13 @@ def _parser() -> argparse.ArgumentParser:
     score.add_argument("--owner", help="name written in the results file")
     score.add_argument("--notes", default="", help="notes written in the results file")
     score.set_defaults(handler=_score)
+
+    rebuild = sub.add_parser("rebuild", help="rewrite a labelled window from its marks file")
+    rebuild.add_argument("--data-dir")
+    rebuild.add_argument("--window", required=True, help="window name, e.g. w1")
+    rebuild.add_argument("--start", type=int, required=True, help="first frame of the window")
+    rebuild.add_argument("--end", type=int, required=True, help="last frame of the window")
+    rebuild.set_defaults(handler=_rebuild)
 
     label = sub.add_parser("label", help="open the labelling window on a stretch of real video")
     label.add_argument("--data-dir")
