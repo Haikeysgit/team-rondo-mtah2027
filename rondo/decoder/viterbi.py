@@ -10,6 +10,10 @@ restarting team. Inside such a window, leaving a dead ball towards that team is 
 ``restart_bonus`` and towards the other team dearer by the same amount. A restart tag with no
 team (throw-ins are tagged ``N/A``) changes nothing.
 
+With ``restart_team_blind`` the tag's team is ignored: inside every restart window, team or not,
+leaving a dead ball towards either team is cheaper by ``restart_bonus``. The window then says only
+that play resumes here, and the evidence decides who has the ball.
+
 Known limitation: after a stoppage with no team on the restart tag, the team that resumes play is
 decided by the evidence alone, and an exact tie goes to ``H`` (the earlier state).
 """
@@ -29,6 +33,7 @@ LABELS = ("H", "A", "D")  # state order; ties go to the earlier state
 H, A, D = 0, 1, 2
 MIN_PROB = 1e-9
 NO_ANCHOR = -1
+ANY_TEAM = 2  # anchor value of a team-blind restart window
 
 
 @dataclass(frozen=True)
@@ -44,9 +49,12 @@ class ViterbiParams:
     dead_entry_cost: float = 25.0  # H or A -> D
     dead_exit_cost: float = 25.0  # D -> H or A
     restart_bonus: float = 6.0  # D -> the tagged team, inside its restart window
+    restart_team_blind: bool = False  # the bonus goes to D -> either team, in every window
 
     def __post_init__(self) -> None:
         for field in fields(self):
+            if field.type in (bool, "bool"):
+                continue
             value = getattr(self, field.name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"viterbi {field.name} must be finite and >= 0, got {value}")
@@ -78,7 +86,12 @@ class ViterbiParams:
                 f"unknown viterbi parameter(s): {', '.join(unknown)}; "
                 f"known: {', '.join(sorted(known))}"
             )
-        return cls(**{name: float(value) for name, value in params.items()})
+        flags = {field.name for field in fields(cls) if field.type in (bool, "bool")}
+        for name in flags & set(params):
+            if not isinstance(params[name], bool):
+                # ValueError like every other bad config value, so callers handle one type
+                raise ValueError(f"viterbi {name} must be true or false, got {params[name]!r}")  # noqa: TRY004
+        return cls(**{name: bool(v) if name in flags else float(v) for name, v in params.items()})
 
     def transitions(self) -> np.ndarray:
         """``T[i, j]``: score added when the label goes from state ``i`` to state ``j``."""
@@ -94,7 +107,8 @@ def decode(emissions: pd.DataFrame, tags: pd.DataFrame, meta: Meta, params: dict
     config = ViterbiParams.from_dict(params)
     base = config.transitions()
     anchored = {team: _anchored(base, team, config.restart_bonus) for team in (H, A)}
-    anchor = _restart_anchor(tags, meta.n_frames)
+    anchored[ANY_TEAM] = _anchored_any(base, config.restart_bonus)
+    anchor = _restart_anchor(tags, meta.n_frames, blind=config.restart_team_blind)
     by_frame = emissions.set_index("frame")[["p_H", "p_A", "p_D"]]
 
     frames_out, labels_out = [], []
@@ -119,12 +133,25 @@ def _anchored(base: np.ndarray, team: int, bonus: float) -> np.ndarray:
     return matrix
 
 
-def _restart_anchor(tags: pd.DataFrame, n_frames: int) -> np.ndarray:
-    """Per frame, the team of the restart window covering it (``H``/``A``), else ``NO_ANCHOR``.
+def _anchored_any(base: np.ndarray, bonus: float) -> np.ndarray:
+    matrix = base.copy()
+    matrix[D, H] += bonus
+    matrix[D, A] += bonus
+    return matrix
+
+
+def _restart_anchor(tags: pd.DataFrame, n_frames: int, blind: bool = False) -> np.ndarray:
+    """Per frame, the team of the restart window covering it (``H``/``A``), else ``NO_ANCHOR``;
+    with ``blind``, every restart window (team or not) is ``ANY_TEAM``.
 
     Windows are painted in start order, so where two overlap the later one wins.
     """
     anchor = np.full(n_frames, NO_ANCHOR, dtype=np.int8)
+    if blind:
+        restarts = tags[is_restart_code(tags["code"])]
+        for start, end in sorted(zip(restarts["start_frame"], restarts["end_frame"], strict=True)):
+            anchor[max(int(start), 0) : min(int(end), n_frames)] = ANY_TEAM
+        return anchor
     restarts = tags[is_restart_code(tags["code"]) & tags["team"].isin(["H", "A"])]
     for start, end, team in sorted(
         zip(restarts["start_frame"], restarts["end_frame"], restarts["team"], strict=True)

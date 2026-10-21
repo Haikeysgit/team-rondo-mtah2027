@@ -1,0 +1,20 @@
+# Experiment: the default with team-blind restart anchors (the tag says play resumes, not who has it).
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+dead_exit_cost = 25.0
+restart_bonus = 6.0
+restart_team_blind = true

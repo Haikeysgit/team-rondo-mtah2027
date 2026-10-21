@@ -140,6 +140,29 @@ def test_a_restart_tag_outside_the_stoppage_does_not_force_a_switch():
     assert runs(out) == [("H", 400)]
 
 
+# -- team-blind restart anchors (the tag's team is unreliable on the real match) ----------------
+
+BLIND = {"restart_team_blind": True}
+# A stoppage then 30 frames of weak live evidence: worth 30 * log(0.4 / 0.2) = 20.8 < 25, so
+# without a bonus the decoder stays dead; with a bonus of 6 the restart pays for itself.
+SHORT_RESTART = emissions((300, H_EVIDENCE), (200, DEAD_EVIDENCE), (30, (0.4, 0.4, 0.2)))
+
+
+def test_team_blind_ignores_the_tagged_team():
+    out = decode(RESTART, tags((1000, 1125, "SET PIECES", "A")), params=BLIND)
+    assert first_alive_after_stoppage(out) == (1070, "H")  # the evidence decides, as untagged
+
+
+def test_team_blind_lets_play_resume_inside_any_restart_window():
+    window = tags((480, 530, "SET PIECES", None))  # throw-ins carry no team
+    assert runs(decode(SHORT_RESTART, window))[-1][0] == "D"
+    assert runs(decode(SHORT_RESTART, window, params=BLIND))[-1][0] != "D"
+
+
+def test_team_blind_is_off_by_default():
+    assert ViterbiParams().restart_team_blind is False
+
+
 # -- halves, gaps and output ---------------------------------------------------------------------
 
 
@@ -273,3 +296,17 @@ def test_ambiguous_evidence_at_the_start_of_half_two_does_not_inherit_half_one()
 def test_a_misspelt_param_is_refused_instead_of_ignored():
     with pytest.raises(ValueError, match="switch_cots"):
         decode(emissions((10, H_EVIDENCE)), params={"switch_cots": 8.0})
+
+
+def test_team_blind_must_be_true_or_false():
+    with pytest.raises(ValueError, match="restart_team_blind"):
+        ViterbiParams.from_dict({"restart_team_blind": "false"})
+
+
+@pytest.mark.parametrize("name", ["restart-blind", "restart-off"])
+def test_the_restart_experiment_configs_are_valid(name):
+    import tomllib
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "configs" / "experiments" / f"{name}.toml"
+    ViterbiParams.from_dict(tomllib.loads(path.read_text())["decoder_params"])
