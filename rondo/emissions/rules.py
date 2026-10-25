@@ -9,7 +9,10 @@ alive unless something says otherwise. Evidence then adds to one label's score:
   at least ``min_control_frames`` (2 s). The organisers' hint and our tactical analyst agree that
   control means a few seconds on the ball; a touch, block or deflection gives no evidence at all,
   so it cannot flip possession. The run is judged on the whole match, so its evidence still starts
-  at the frame the team gained the ball, where the decoder places the switch.
+  at the frame the team gained the ball, where the decoder places the switch. A ball is
+  *contested*, and is nobody's control, when the other team's nearest player is less than
+  ``contest_margin_m`` farther from it (a challenge, a defender pressing the keeper). The default
+  margin of 0 never marks a ball contested.
 - **Ball out of bounds** -> ``out_weight`` to ``D``. Control is not counted while the ball is out.
 - **Stoppage**: players are slow on average (``team_speed_mean_m_s < stopped_speed_ms``) *and*
   the ball is not moving like play (missing, slower than ``still_ball_ms``, or inside a Smart
@@ -37,6 +40,7 @@ H, A, D = 0, 1, 2
 COLUMNS = (
     "nearest_team",
     "nearest_dist_m",
+    "second_team_dist_m",
     "ball_speed_ms",
     "ball_in_bounds",
     "ball_missing_run",
@@ -55,6 +59,7 @@ class RulesParams:
     control_weight: float = 2.0
     min_control_frames: int = 50
     max_control_gap_frames: int = 75
+    contest_margin_m: float = 0.0
     out_weight: float = 5.0
     stopped_speed_ms: float = 1.0
     still_ball_ms: float = 0.5
@@ -108,6 +113,7 @@ class RulesV0:
         missing = signals["ball_missing_run"].to_numpy(dtype="float64") > 0
         speed = signals["ball_speed_ms"].to_numpy(dtype="float64")
         dist = signals["nearest_dist_m"].to_numpy(dtype="float64")
+        second = signals["second_team_dist_m"].to_numpy(dtype="float64")
         nearest = signals["nearest_team"].to_numpy(dtype=object)
         out = (~signals["ball_in_bounds"].astype("boolean")).fillna(False).to_numpy(dtype=bool)
         players = signals["team_speed_mean_m_s"].to_numpy(dtype="float64")
@@ -119,6 +125,8 @@ class RulesV0:
 
         # NaN speed counts as slow here: the ball is seen, only its speed is unknown (track edges).
         control = ~missing & ~out & (dist <= p.control_dist_m) & ~(speed >= p.control_speed_ms)
+        # NaN for the other team (nobody of theirs tracked) compares False: not a contest.
+        control &= ~((second - dist) < p.contest_margin_m)
         control &= _sustained(control, nearest, p.min_control_frames, p.max_control_gap_frames)
         for team, label in ((H, "H"), (A, "A")):
             scores[:, team] += p.control_weight * (control & (nearest == label))
