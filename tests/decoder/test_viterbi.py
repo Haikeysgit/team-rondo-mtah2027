@@ -324,11 +324,11 @@ def load_config(name: str) -> dict:
 
 @pytest.mark.parametrize("name", STAY_DEAD)
 def test_a_stay_dead_config_changes_only_the_exit_outside_restart_windows(name):
-    default, config = load_config("default"), load_config(name)
-    base, params = default["decoder_params"], config["decoder_params"]
+    reference, config = load_config("restart-blind"), load_config(name)
+    base, params = reference["decoder_params"], config["decoder_params"]
     ViterbiParams.from_dict(params)
     assert {k: v for k, v in config.items() if k != "decoder_params"} == {
-        k: v for k, v in default.items() if k != "decoder_params"
+        k: v for k, v in reference.items() if k != "decoder_params"
     }
     assert params["restart_team_blind"] is True
     assert params["switch_cost"] == base["switch_cost"]
