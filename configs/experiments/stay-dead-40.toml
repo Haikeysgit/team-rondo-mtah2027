@@ -1,0 +1,22 @@
+# Experiment: once the ball is dead it stays dead until a real restart. Leaving a dead ball costs
+# 40 outside a restart window; inside one (team-blind) the bonus of 21 brings it back to 19, as in
+# restart-blind.toml. Everything else is the default.
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+dead_exit_cost = 40.0
+restart_bonus = 21.0
+restart_team_blind = true

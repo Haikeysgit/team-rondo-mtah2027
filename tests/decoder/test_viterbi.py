@@ -305,8 +305,62 @@ def test_team_blind_must_be_true_or_false():
 
 @pytest.mark.parametrize("name", ["restart-blind", "restart-off"])
 def test_the_restart_experiment_configs_are_valid(name):
+    ViterbiParams.from_dict(load_config(name)["decoder_params"])
+
+
+# -- stay-dead experiment: leaving a dead ball is dear, except inside a restart window ------------
+
+STAY_DEAD = ["stay-dead-40", "stay-dead-60", "stay-dead-80", "stay-dead-120"]
+
+
+def load_config(name: str) -> dict:
     import tomllib
     from pathlib import Path
 
-    path = Path(__file__).resolve().parents[2] / "configs" / "experiments" / f"{name}.toml"
-    ViterbiParams.from_dict(tomllib.loads(path.read_text())["decoder_params"])
+    root = Path(__file__).resolve().parents[2] / "configs"
+    path = root / "default.toml" if name == "default" else root / "experiments" / f"{name}.toml"
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", STAY_DEAD)
+def test_a_stay_dead_config_changes_only_the_exit_outside_restart_windows(name):
+    reference, config = load_config("restart-blind"), load_config(name)
+    base, params = reference["decoder_params"], config["decoder_params"]
+    ViterbiParams.from_dict(params)
+    assert {k: v for k, v in config.items() if k != "decoder_params"} == {
+        k: v for k, v in reference.items() if k != "decoder_params"
+    }
+    assert params["restart_team_blind"] is True
+    assert params["switch_cost"] == base["switch_cost"]
+    assert params["dead_entry_cost"] == base["dead_entry_cost"]
+    # Inside a restart window, leaving a dead ball costs what it costs today.
+    assert params["dead_exit_cost"] - params["restart_bonus"] == pytest.approx(
+        base["dead_exit_cost"] - base["restart_bonus"]
+    )
+    assert params["dead_exit_cost"] > base["dead_exit_cost"]
+
+
+# A 60 s stoppage with 40 frames of walking players and the ball moved about in the middle, then
+# play resumes at frame 1700.
+LONG_STOP = emissions(
+    (200, H_EVIDENCE), (730, DEAD_EVIDENCE), (40, NO_BALL), (730, DEAD_EVIDENCE), (200, H_EVIDENCE)
+)
+RESTART_AT_1700 = tags((1650, 1775, "SET PIECES", None))
+
+
+def test_today_a_long_stop_is_cut_by_players_walking_about():
+    out = decode(LONG_STOP, RESTART_AT_1700, params=load_config("restart-blind")["decoder_params"])
+    assert [label for label, _ in runs(out)] == ["H", "D", "H", "D", "H"]
+
+
+@pytest.mark.parametrize("name", STAY_DEAD)
+def test_a_stay_dead_config_keeps_a_long_stop_whole_until_the_restart(name):
+    out = decode(LONG_STOP, RESTART_AT_1700, params=load_config(name)["decoder_params"])
+    assert runs(out) == [("H", 200), ("D", 1500), ("H", 200)]
+
+
+@pytest.mark.parametrize("name", STAY_DEAD)
+def test_a_stay_dead_config_still_resumes_play_without_a_restart_tag(name):
+    em = emissions((200, H_EVIDENCE), (1500, DEAD_EVIDENCE), (200, H_EVIDENCE))
+    out = decode(em, params=load_config(name)["decoder_params"])
+    assert runs(out) == [("H", 200), ("D", 1500), ("H", 200)]
