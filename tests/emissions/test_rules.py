@@ -66,7 +66,7 @@ def held_probs(row: dict, **params) -> tuple[float, float, float]:
     return out["p_H"], out["p_A"], out["p_D"]
 
 
-def decode(rows: list[dict]) -> list[str]:
+def decode(rows: list[dict], **params) -> list[str]:
     import rondo.decoder  # noqa: F401  (registers "viterbi")
 
     table = signals(*rows)
@@ -81,7 +81,9 @@ def decode(rows: list[dict]) -> list[str]:
             "half": pd.array([], dtype="Int8"),
         }
     )
-    return registry.DECODERS["viterbi"](predict(table), no_tags, meta, {})["label"].tolist()
+    return registry.DECODERS["viterbi"](predict(table, **params), no_tags, meta, {})[
+        "label"
+    ].tolist()
 
 
 H_CONTROL = {"nearest_team": "H", "nearest_dist_m": 0.7, "ball_speed_ms": 2.0}
@@ -203,6 +205,43 @@ def test_a_long_gap_splits_the_run():
     rows = [H_CONTROL] * 30 + [BALL_MISSING] * 100 + [H_CONTROL] * 30
     out = predict(signals(*rows))
     assert abs(out["p_H"].iloc[10] - out["p_A"].iloc[10]) < 1e-9
+
+
+# A challenge: an A player is nearest the ball, but an H player is only 0.3 m farther away.
+A_CHALLENGE = {
+    "nearest_team": "A",
+    "nearest_dist_m": 0.6,
+    "second_team_dist_m": 0.9,
+    "ball_speed_ms": 2.0,
+}
+
+
+def test_by_default_a_contested_ball_still_counts_as_control():
+    assert held_probs(A_CHALLENGE)[1] > 0.8
+
+
+def test_with_a_contest_margin_a_contested_ball_gives_no_lean():
+    p_h, p_a, _ = held_probs(A_CHALLENGE, contest_margin_m=1.0)
+    assert abs(p_h - p_a) < 1e-9
+
+
+def test_with_a_contest_margin_a_clear_ball_still_counts_as_control():
+    assert held_probs(A_CONTROL, contest_margin_m=1.0)[1] > 0.8
+
+
+def test_with_a_contest_margin_no_other_player_seen_is_not_a_contest():
+    alone = {**A_CONTROL, "second_team_dist_m": np.nan}
+    assert held_probs(alone, contest_margin_m=1.0)[1] > 0.8
+
+
+def test_today_a_three_second_challenge_flips_possession():
+    rows = [H_CONTROL] * 150 + [A_CHALLENGE] * 75 + [H_CONTROL] * 150
+    assert "A" in decode(rows)
+
+
+def test_with_a_contest_margin_a_three_second_challenge_keeps_possession():
+    rows = [H_CONTROL] * 150 + [A_CHALLENGE] * 75 + [H_CONTROL] * 150
+    assert decode(rows, contest_margin_m=1.0) == ["H"] * 375
 
 
 def test_min_control_frames_sets_what_counts_as_sustained():

@@ -1,0 +1,24 @@
+# Experiment (in-play failures): the default with one change: a ball is contested, and
+# nobody's control, when the other team's nearest player is less than 0.5 m farther from it.
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+contest_margin_m = 0.5
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+# Once the ball is dead it stays dead until a real restart: leaving a dead ball costs 60 outside a
+# restart window and 60 - 41 = 19 inside one, whichever team restarts.
+dead_exit_cost = 60.0
+restart_bonus = 41.0
+restart_team_blind = true
