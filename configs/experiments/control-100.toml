@@ -1,4 +1,4 @@
-# Experiment (in-play failures): the default with one change: control needs 100 frames (4 s) of keeping the ball.
+# Experiment (in-play failures): stay-dead-60.toml with one change: control needs 100 frames (4 s) of keeping the ball.
 signals = [
   "ball_nearest",
   "ball_motion",

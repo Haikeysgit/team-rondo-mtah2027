@@ -1,4 +1,5 @@
-"""In-play experiment configs: each is the default with exactly one setting changed."""
+"""In-play experiment configs: each is the stay-dead setting (``stay-dead-60.toml``, the default
+from Oct 25 to Oct 27) with exactly one setting changed."""
 
 import tomllib
 from pathlib import Path
@@ -28,9 +29,9 @@ def load(path: Path) -> dict:
 
 
 @pytest.mark.parametrize("name", sorted(IN_PLAY))
-def test_an_in_play_config_is_the_default_with_one_setting_changed(name):
+def test_an_in_play_config_is_stay_dead_with_one_setting_changed(name):
     section, setting, value = IN_PLAY[name]
-    default = load(CONFIGS / "default.toml")
+    default = load(CONFIGS / "experiments" / "stay-dead-60.toml")
     config = load(CONFIGS / "experiments" / f"{name}.toml")
 
     expected = {key: dict(val) if isinstance(val, dict) else val for key, val in default.items()}
