@@ -1,9 +1,11 @@
-"""Metrica's public sample game 3: another match to validate on, with an answer key from its events.
+"""Metrica's public sample games: other matches to validate on, with answer keys from their events.
 
 The official rules forbid hand labels of the provided match for any purpose, validation included,
 and allow labelled data from other matches. Metrica publishes three anonymised matches with
 tracking and human-recorded event data (``github.com/metrica-sports/sample-data``). Game 3 uses
-the same FIFA EPTS tracking format as the provided match, so it runs through the same pipeline.
+the same FIFA EPTS tracking format as the provided match; games 1 and 2 use Metrica's CSV format
+(home and away tracking in separate files, CSV events). All three load into the same
+``MatchData`` and run through the same pipeline.
 
 **The answer key is built by code from the events, following our possession rules:**
 
@@ -44,12 +46,14 @@ from rondo.contracts import (
     validate_tags,
 )
 
-GAME_FOLDER = Path("data") / "Sample_Game_3"
+GAMES = (1, 2, 3)
 METADATA, TRACKING, EVENTS = (
     "Sample_Game_3_metadata.xml",
     "Sample_Game_3_tracking.txt",
     "Sample_Game_3_events.json",
 )
+CSV_PITCH = (105.0, 68.0)  # the sample README: every game is 105 x 68 m
+CSV_FPS = 25
 SPEED_HALF_WINDOW = 2  # frames either side of the centred difference for player speed
 POSSESSION_EVENTS = {"PASS", "CARRY", "RECOVERY", "SET PIECE", "SHOT", "BALL LOST", "BALL OUT"}
 STOPPAGE_SUBTYPES = {"OFFSIDE", "HAND BALL", "REFEREE HIT"}
@@ -57,9 +61,9 @@ MIN_CONTROL_FRAMES = 50  # 2 s, as ``RulesParams.min_control_frames``
 MIN_PASSES = 2
 
 
-def game_folder(root: Path) -> Path:
-    """The game-3 folder inside a checkout of the sample-data repository."""
-    return Path(root) / GAME_FOLDER
+def game_folder(root: Path, game: int = 3) -> Path:
+    """The folder of sample game ``game`` inside a checkout of the sample-data repository."""
+    return Path(root) / "data" / f"Sample_Game_{game}"
 
 
 # -- tracking -------------------------------------------------------------------------------------
@@ -96,8 +100,8 @@ def _meta_xml(path: Path) -> dict:
     }
 
 
-def _read_tracking(path: Path, info: dict, n_frames: int) -> tuple[pd.DataFrame, np.ndarray]:
-    """Ball positions per row and player positions per (slot, row); NaN where not tracked."""
+def _read_epts_tracking(path: Path, info: dict, n_frames: int) -> tuple[np.ndarray, np.ndarray]:
+    """Ball ``(rows, 2)`` and players ``(2, slots, rows)`` positions; NaN where not tracked."""
     n_slots = len(info["slots"])
     px = np.full((n_slots, n_frames), np.nan)
     py = np.full((n_slots, n_frames), np.nan)
@@ -121,23 +125,31 @@ def _read_tracking(path: Path, info: dict, n_frames: int) -> tuple[pd.DataFrame,
             if ball_group and ball_group[0] != "N":
                 bx, by = ball_group.split(",")[:2]
                 ball[row] = float(bx), float(by)
-    frames = pd.DataFrame(
-        {"frame": np.arange(n_frames, dtype="int64"), "ball_x": ball[:, 0], "ball_y": ball[:, 1]}
-    )
-    return frames, np.stack([px, py])
+    return ball, np.stack([px, py])
 
 
-def _players(positions: np.ndarray, info: dict, fps: int) -> pd.DataFrame:
+def _read_csv_side(path: Path) -> tuple[pd.DataFrame, int]:
+    """One side's CSV tracking: ``(table, players)``. Columns: ``0`` period, ``1`` frame, then
+    ``x, y`` per player, then the ball's ``x, y`` (the time column is dropped)."""
+    with open(path, encoding="utf-8") as handle:
+        names = [next(handle) for _ in range(3)][2].strip().split(",")
+    players = sum(1 for name in names[3:] if name.startswith("Player"))
+    table = pd.read_csv(path, skiprows=3, header=None, usecols=range(3 + 2 * players + 2))
+    return table.drop(columns=2), players
+
+
+def _players(
+    positions: np.ndarray, slot_team: np.ndarray, pitch: tuple[float, float], fps: int
+) -> pd.DataFrame:
     """Long table ``frame, slot, team, x, y, speed``; speed from a centred difference in metres."""
     px, py = positions
-    width, height = info["pitch"]
+    width, height = pitch
     k = SPEED_HALF_WINDOW
     dx = np.full_like(px, np.nan)
     dy = np.full_like(py, np.nan)
     dx[:, k:-k] = (px[:, 2 * k :] - px[:, : -2 * k]) * width
     dy[:, k:-k] = (py[:, 2 * k :] - py[:, : -2 * k]) * height
     speed = np.hypot(dx, dy) * fps / (2 * k)
-    slot_team = np.array([info["player_team"][p] for p in info["slots"]])
     slot, frame = np.nonzero(~np.isnan(px))
     order = np.lexsort((slot, frame))
     slot, frame = slot[order], frame[order]
@@ -166,27 +178,22 @@ def _no_tags() -> pd.DataFrame:
     )
 
 
-def load_sample_game(root: Path) -> MatchData:
-    """Game 3 as a ``MatchData``, the same shape as the provided match, checked against C1."""
-    folder = game_folder(root)
-    info = _meta_xml(folder / METADATA)
-    n_frames = info["halves"][-1][2] + 1
-    meta = Meta(
-        n_frames=n_frames,
-        fps=info["fps"],
-        pitch=info["pitch"],
-        half_blocks=info["halves"],
-        home_name=info["home"],
-        away_name=info["away"],
-    )
-    frames, positions = _read_tracking(folder / TRACKING, info, n_frames)
+def _match(ball: np.ndarray, positions: np.ndarray, slot_team: np.ndarray, meta: Meta) -> MatchData:
+    """Assemble and check the C1 tables from ball and player positions per row."""
+    n_frames = meta.n_frames
     half = np.zeros(n_frames, dtype=np.int8)
     for number, first, last in meta.half_blocks:
         half[first : last + 1] = number
-    frames["half"] = pd.array(np.where(half > 0, half, pd.NA), dtype="Int8")
-    frames["graded"] = half > 0
-    frames = frames[["frame", "half", "graded", "ball_x", "ball_y"]]
-    players = _players(positions, info, meta.fps)
+    frames = pd.DataFrame(
+        {
+            "frame": np.arange(n_frames, dtype="int64"),
+            "half": pd.array(np.where(half > 0, half, pd.NA), dtype="Int8"),
+            "graded": half > 0,
+            "ball_x": ball[:, 0],
+            "ball_y": ball[:, 1],
+        }
+    )
+    players = _players(positions, slot_team, meta.pitch, meta.fps)
     tags = _no_tags()
     validate_meta(meta)
     validate_frames(frames, meta)
@@ -195,16 +202,73 @@ def load_sample_game(root: Path) -> MatchData:
     return MatchData(frames=frames, players=players, tags=tags, meta=meta)
 
 
+def _load_epts(folder: Path) -> MatchData:
+    info = _meta_xml(folder / METADATA)
+    meta = Meta(
+        n_frames=info["halves"][-1][2] + 1,
+        fps=info["fps"],
+        pitch=info["pitch"],
+        half_blocks=info["halves"],
+        home_name=info["home"],
+        away_name=info["away"],
+    )
+    ball, positions = _read_epts_tracking(folder / TRACKING, info, meta.n_frames)
+    slot_team = np.array([info["player_team"][p] for p in info["slots"]])
+    return _match(ball, positions, slot_team, meta)
+
+
+def _load_csv(folder: Path, game: int) -> MatchData:
+    prefix = f"Sample_Game_{game}"
+    home, n_home = _read_csv_side(folder / f"{prefix}_RawTrackingData_Home_Team.csv")
+    away, n_away = _read_csv_side(folder / f"{prefix}_RawTrackingData_Away_Team.csv")
+    n_frames = int(max(home[1].max(), away[1].max()))
+    rows = home[1].to_numpy(dtype=np.int64) - 1
+    periods = home[0].to_numpy()
+    halves = [
+        (period, int(rows[periods == period].min()), int(rows[periods == period].max()))
+        for period in (1, 2)
+        if (periods == period).any()
+    ]
+    meta = Meta(
+        n_frames=n_frames,
+        fps=CSV_FPS,
+        pitch=CSV_PITCH,
+        half_blocks=halves,
+        home_name="Home",
+        away_name="Away",
+    )
+    px = np.full((n_home + n_away, n_frames), np.nan)
+    py = np.full((n_home + n_away, n_frames), np.nan)
+    for table, first_slot, count in ((home, 0, n_home), (away, n_home, n_away)):
+        at = table[1].to_numpy(dtype=np.int64) - 1
+        values = table.to_numpy(dtype="float64")[:, 2:]
+        for i in range(count):
+            px[first_slot + i, at] = values[:, 2 * i]
+            py[first_slot + i, at] = values[:, 2 * i + 1]
+    ball = np.full((n_frames, 2), np.nan)
+    ball[rows] = home.to_numpy(dtype="float64")[:, -2:]
+    slot_team = np.array(["H"] * n_home + ["A"] * n_away)
+    return _match(ball, np.stack([px, py]), slot_team, meta)
+
+
+def load_sample_game(root: Path, game: int = 3) -> MatchData:
+    """Sample game ``game`` as a ``MatchData``, the same shape as the provided match, checked
+    against C1."""
+    folder = game_folder(root, game)
+    return _load_epts(folder) if game == 3 else _load_csv(folder, game)
+
+
 # -- the answer key -------------------------------------------------------------------------------
 
 
 def home_team_id(root: Path) -> str:
-    """The id of the home team (the first ``<Team>`` in the metadata, as for the provided match)."""
-    return _meta_xml(game_folder(root) / METADATA)["home_id"]
+    """Game 3's home team id (the first ``<Team>`` in the metadata, as for the provided match)."""
+    return _meta_xml(game_folder(root, 3) / METADATA)["home_id"]
 
 
 def read_events(path: Path, home_id: str) -> pd.DataFrame:
-    """``start, end`` (rows), ``kind``, ``subtypes`` (a set), ``team`` (``H``/``A``), ``half``."""
+    """Game 3's JSON events: ``start, end`` (rows), ``kind``, ``subtypes`` (a set), ``team``
+    (``H``/``A``), ``half``."""
     raw = json.loads(Path(path).read_text(encoding="utf-8"))["data"]
     rows = []
     for e in raw:
@@ -222,6 +286,36 @@ def read_events(path: Path, home_id: str) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows).sort_values(["start", "end"], kind="stable", ignore_index=True)
+
+
+def read_events_csv(path: Path) -> pd.DataFrame:
+    """Games 1 and 2's CSV events, as the same table as ``read_events``."""
+    raw = pd.read_csv(path, dtype={"Subtype": "str"}, keep_default_na=False)
+    start = raw["Start Frame"].astype("int64") - 1
+    end = raw["End Frame"].astype("int64") - 1
+    table = pd.DataFrame(
+        {
+            "start": start,
+            "end": np.maximum(start, end),  # set pieces carry an end frame of 0
+            "kind": raw["Type"].str.strip(),
+            "subtypes": [
+                frozenset(s.strip() for s in sub.split("-") if s.strip()) for sub in raw["Subtype"]
+            ],
+            "team": np.where(raw["Team"].str.strip() == "Home", "H", "A"),
+            "half": raw["Period"].astype("int64"),
+        }
+    )
+    return table.sort_values(["start", "end"], kind="stable", ignore_index=True)
+
+
+def answer_key(root: Path, game: int, meta: Meta) -> pd.Series:
+    """The full-length answer key of sample game ``game``, from its events."""
+    folder = game_folder(root, game)
+    if game == 3:
+        events = read_events(folder / EVENTS, home_team_id(root))
+    else:
+        events = read_events_csv(folder / f"Sample_Game_{game}_RawEventsData.csv")
+    return possession_from_events(events, meta)
 
 
 def _dead_from(e) -> int | None:
@@ -243,7 +337,7 @@ def _dead_from(e) -> int | None:
 def possession_from_events(events: pd.DataFrame, meta: Meta) -> pd.Series:
     """Full-length ``H/A/D/X`` labels from the events, by the rules in the module docstring."""
     labels = np.full(meta.n_frames, "X", dtype=object)
-    for half, first, last in meta.half_blocks:
+    for half, _first, last in meta.half_blocks:
         block = events[events["half"] == half]
         if block.empty:
             continue

@@ -175,3 +175,44 @@ def test_a_brief_spell_with_two_passes_is_control(tmp_path, game):
         read_events(folder / "Sample_Game_3_events.json", "TA"), game.meta
     )
     assert [label for label, _, _ in runs(truth)][:3] == ["X", "H", "A"]
+
+
+# -- games 1 and 2 (CSV) --------------------------------------------------------------------------
+
+
+def test_a_csv_game_follows_the_contracts(tmp_path):
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path, game=1)
+    match = load_sample_game(tmp_path, game=1)
+    meta = match.meta
+    assert meta.n_frames == 200 and meta.half_blocks == [(1, 0, 99), (2, 100, 199)]
+    assert meta.pitch == (105.0, 68.0)
+    validate_frames(match.frames, meta)
+    validate_players(match.players, meta)
+    assert match.players.groupby("team")["slot"].nunique().to_dict() == {"A": 2, "H": 2}
+    assert match.frames.set_index("frame")["ball_x"].loc[9:11].isna().all()
+    walker = match.players[(match.players["frame"] == 100) & (match.players["x"] > 0.25)]
+    assert walker["speed"].iloc[0] == pytest.approx(0.002 * 105 * 25, rel=1e-3)
+
+
+def test_a_csv_game_gets_the_same_answer_key_as_the_json_one(tmp_path, game):
+    from rondo.othergames.metrica import answer_key
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path / "csv", game=2)
+    write_game(tmp_path / "json")
+    assert answer_key(tmp_path / "csv", 2, game.meta).equals(
+        answer_key(tmp_path / "json", 3, game.meta)
+    )
+
+
+def test_cli_scores_every_game_present_and_all_together(capsys, tmp_path):
+    from rondo.cli import main
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path, game=1)
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path)]) == 0
+    rows = [line.split()[0] for line in capsys.readouterr().out.splitlines()[1:]]
+    assert rows == ["sample1", "sample3", "all"]

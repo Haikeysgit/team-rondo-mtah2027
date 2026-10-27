@@ -113,3 +113,54 @@ def write_game(root: Path, events: list[dict] | None = None) -> Path:
     body = {"data": EVENTS if events is None else events, "metadata": {}}
     (folder / "Sample_Game_3_events.json").write_text(json.dumps(body), encoding="utf-8")
     return folder
+
+
+# -- games 1 and 2: Metrica's CSV format ----------------------------------------------------------
+
+
+def _csv_tracking(side: str, numbers: list[int]) -> str:
+    """Home or away file: 3 header rows, then ``Period,Frame,Time,x,y,...,ball_x,ball_y``. Same
+    200 frames as above, periods 1 (frames 1-100) and 2 (101-200); the ball missing on 10-12."""
+    pairs = len(numbers)
+    rows = [
+        ",,," + ",".join(f"{side},,"[:-1] for _ in numbers) + ",,",
+        ",,," + ",".join(f"{n}," for n in numbers) + ",,",
+        "Period,Frame,Time [s]," + ",".join(f"Player{n}," for n in numbers) + "Ball,",
+    ]
+    for frame_id in range(1, N_FRAMES + 1):
+        period = 1 if frame_id <= 100 else 2
+        if side == "Home":
+            xy = [f"{0.1 + 0.002 * frame_id:.5f},0.50000"] + ["0.30000,0.40000"] * (pairs - 1)
+        else:
+            xy = ["0.60000,0.50000"] * pairs
+        ball = "NaN,NaN" if 10 <= frame_id <= 12 else "0.50000,0.50000"
+        rows.append(f"{period},{frame_id},{frame_id * 0.04:.2f}," + ",".join(xy) + f",{ball}")
+    return "\n".join(rows) + "\n"
+
+
+def _csv_events(events: list[dict]) -> str:
+    rows = ["Team,Type,Subtype,Period,Start Frame,Start Time [s],End Frame,End Time [s],From,To"]
+    for e in events:
+        team = "Home" if e["team"]["id"] == "TA" else "Away"
+        sub = "-".join(s["name"] for s in e["subtypes"] or [])
+        start, end = e["start"]["frame"], e["end"]["frame"]
+        end_csv = 0 if e["type"]["name"] == "SET PIECE" else end  # as in the real files
+        rows.append(f"{team},{e['type']['name']},{sub},{e['period']},{start},0,{end_csv},0,P,")
+    return "\n".join(rows) + "\n"
+
+
+def write_csv_game(root: Path, game: int = 1, events: list[dict] | None = None) -> Path:
+    """Write sample game ``game`` (1 or 2) in the CSV layout under ``root``; return its folder."""
+    folder = root / "data" / f"Sample_Game_{game}"
+    folder.mkdir(parents=True)
+    prefix = f"Sample_Game_{game}"
+    (folder / f"{prefix}_RawTrackingData_Home_Team.csv").write_text(
+        _csv_tracking("Home", [11, 1]), encoding="utf-8"
+    )
+    (folder / f"{prefix}_RawTrackingData_Away_Team.csv").write_text(
+        _csv_tracking("Away", [25, 15]), encoding="utf-8"
+    )
+    (folder / f"{prefix}_RawEventsData.csv").write_text(
+        _csv_events(EVENTS if events is None else events), encoding="utf-8"
+    )
+    return folder
