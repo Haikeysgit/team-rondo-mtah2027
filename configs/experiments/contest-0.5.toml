@@ -1,4 +1,4 @@
-# Experiment (in-play failures): the default with one change: a ball is contested, and
+# Experiment (in-play failures): stay-dead-60.toml with one change: a ball is contested, and
 # nobody's control, when the other team's nearest player is less than 0.5 m farther from it.
 signals = [
   "ball_nearest",

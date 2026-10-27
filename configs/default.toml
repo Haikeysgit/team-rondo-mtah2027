@@ -15,8 +15,5 @@ decoder = "viterbi"
 [decoder_params]
 switch_cost = 8.0
 dead_entry_cost = 25.0
-# Once the ball is dead it stays dead until a real restart: leaving a dead ball costs 60 outside a
-# restart window and 60 - 41 = 19 inside one, whichever team restarts.
-dead_exit_cost = 60.0
-restart_bonus = 41.0
-restart_team_blind = true
+dead_exit_cost = 25.0
+restart_bonus = 6.0

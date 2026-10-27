@@ -1,4 +1,4 @@
-# Experiment (in-play failures): the default with one change: switch_cost 12.
+# Experiment (in-play failures): stay-dead-60.toml with one change: switch_cost 12.
 signals = [
   "ball_nearest",
   "ball_motion",
