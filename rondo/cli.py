@@ -145,24 +145,24 @@ def _print_table(table: pd.DataFrame) -> None:
 
 
 def _othergame(args: argparse.Namespace) -> int:
-    """Run a config on Metrica's public sample game 3 and score it against its event answer key."""
+    """Run a config on Metrica's public sample games and score it against their event answer keys.
+
+    One row per game present (``sample1``..``sample3``) and, with more than one, an ``all`` row:
+    the games scored together, joined end to end with an ``X`` frame between them so no
+    possession runs from one match into the next.
+    """
     import os
 
     from rondo.eval import score_all, write_result
-    from rondo.othergames.metrica import (
-        EVENTS,
-        game_folder,
-        home_team_id,
-        load_sample_game,
-        possession_from_events,
-        read_events,
-    )
+    from rondo.othergames.metrica import GAMES, answer_key, game_folder, load_sample_game
 
     if args.result and not args.owner:
         _parser().error("--result needs --owner")
     default_root = Path.home() / "Documents" / "mtah-other-games"
     root = Path(args.root or os.environ.get("MTAH_OTHER_GAMES_DIR") or default_root)
-    if not game_folder(root).is_dir():
+    wanted = GAMES if args.game == "all" else (int(args.game),)
+    games = [game for game in wanted if game_folder(root, game).is_dir()]
+    if not games:
         print(
             f"no sample game under {root}: clone github.com/metrica-sports/sample-data there, "
             "or pass --root"
@@ -170,15 +170,30 @@ def _othergame(args: argparse.Namespace) -> int:
         return 1
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
-    match = load_sample_game(root)
-    events = read_events(game_folder(root) / EVENTS, home_team_id(root))
-    truth = possession_from_events(events, match.meta)
-    pred = run_pipeline(match, config).set_index("frame")["label"]
-    table = score_all(pred, {"sample3": truth}, bootstrap=args.bootstrap)
-    table = table[table["window"] == "sample3"]
+
+    tables, preds, truths = [], [], []
+    for game in games:
+        match = load_sample_game(root, game)
+        truth = answer_key(root, game, match.meta)
+        pred = run_pipeline(match, config).set_index("frame")["label"]
+        table = score_all(pred, {f"sample{game}": truth}, bootstrap=args.bootstrap)
+        tables.append(table[table["window"] == f"sample{game}"])
+        preds.append(pred)
+        truths.append(truth)
+    if len(games) > 1:
+        gap = pd.Series(["X"])
+        pred = pd.concat([part for p in preds for part in (p, gap)], ignore_index=True)
+        truth = pd.concat([part for t in truths for part in (t, gap)], ignore_index=True)
+        pred.index = truth.index = pd.RangeIndex(len(truth), name="frame")
+        table = score_all(pred, {"all": truth}, bootstrap=args.bootstrap)
+        tables.append(table[table["window"] == "all"])
+    table = pd.concat(tables, ignore_index=True)
     _print_table(table)
     if args.result:
-        command = f"rondo othergame --config {args.config} --bootstrap {args.bootstrap}"
+        command = (
+            f"rondo othergame --game {args.game} --config {args.config} "
+            f"--bootstrap {args.bootstrap}"
+        )
         write_result(Path(args.result), args.owner, command, table, args.notes)
         print(f"wrote {args.result}")
     return 0
@@ -338,8 +353,9 @@ def _parser() -> argparse.ArgumentParser:
     repro.add_argument("--validate-rows", type=int, help="as for run (small test bundles)")
     repro.set_defaults(handler=_verify_repro)
 
-    other = sub.add_parser("othergame", help="score a config on Metrica's public sample game 3")
+    other = sub.add_parser("othergame", help="score a config on Metrica's public sample games")
     other.add_argument("--root", help="checkout of github.com/metrica-sports/sample-data")
+    other.add_argument("--game", choices=["1", "2", "3", "all"], default="all")
     other.add_argument("--config", default=str(DEFAULT_CONFIG))
     other.add_argument("--bootstrap", type=int, default=0, help="bootstrap draws, e.g. 1000")
     other.add_argument("--result", help="also write a Markdown results file")
