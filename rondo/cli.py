@@ -130,6 +130,60 @@ def _verify_repro(args: argparse.Namespace) -> int:
     return 0 if same else 1
 
 
+def _print_table(table: pd.DataFrame) -> None:
+    print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
+    for row in table.itertuples(index=False):
+        interval = (
+            f"{row.spell_bootstrap_low:.4f}..{row.spell_bootstrap_high:.4f}"
+            if pd.notna(row.spell_bootstrap_low)
+            else "-"
+        )
+        print(
+            f"{row.window:<10} {row.n_graded:>7} {row.spell_f1_mean:>8.4f} {interval:>15} "
+            f"{row.macro_f1:>8.4f}  {row.n_pred_spells} / {row.n_gt_spells}"
+        )
+
+
+def _othergame(args: argparse.Namespace) -> int:
+    """Run a config on Metrica's public sample game 3 and score it against its event answer key."""
+    import os
+
+    from rondo.eval import score_all, write_result
+    from rondo.othergames.metrica import (
+        EVENTS,
+        game_folder,
+        home_team_id,
+        load_sample_game,
+        possession_from_events,
+        read_events,
+    )
+
+    if args.result and not args.owner:
+        _parser().error("--result needs --owner")
+    default_root = Path.home() / "Documents" / "mtah-other-games"
+    root = Path(args.root or os.environ.get("MTAH_OTHER_GAMES_DIR") or default_root)
+    if not game_folder(root).is_dir():
+        print(
+            f"no sample game under {root}: clone github.com/metrica-sports/sample-data there, "
+            "or pass --root"
+        )
+        return 1
+    with open(args.config, "rb") as handle:
+        config = tomllib.load(handle)
+    match = load_sample_game(root)
+    events = read_events(game_folder(root) / EVENTS, home_team_id(root))
+    truth = possession_from_events(events, match.meta)
+    pred = run_pipeline(match, config).set_index("frame")["label"]
+    table = score_all(pred, {"sample3": truth}, bootstrap=args.bootstrap)
+    table = table[table["window"] == "sample3"]
+    _print_table(table)
+    if args.result:
+        command = f"rondo othergame --config {args.config} --bootstrap {args.bootstrap}"
+        write_result(Path(args.result), args.owner, command, table, args.notes)
+        print(f"wrote {args.result}")
+    return 0
+
+
 def _score(args: argparse.Namespace) -> int:
     from rondo import config as runtime_config
     from rondo.eval import load_windows, read_labels, score_all, write_result
@@ -160,17 +214,7 @@ def _score(args: argparse.Namespace) -> int:
     except ValueError as error:  # two windows label the same frame differently
         print(f"invalid windows: {error}")
         return 1
-    print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
-    for row in table.itertuples(index=False):
-        interval = (
-            f"{row.spell_bootstrap_low:.4f}..{row.spell_bootstrap_high:.4f}"
-            if pd.notna(row.spell_bootstrap_low)
-            else "-"
-        )
-        print(
-            f"{row.window:<10} {row.n_graded:>7} {row.spell_f1_mean:>8.4f} {interval:>15} "
-            f"{row.macro_f1:>8.4f}  {row.n_pred_spells} / {row.n_gt_spells}"
-        )
+    _print_table(table)
     if args.result:
         command = f"rondo score {args.csv} --bootstrap {args.bootstrap}"
         if args.windows:
@@ -293,6 +337,15 @@ def _parser() -> argparse.ArgumentParser:
     repro.add_argument("--expected-frames", type=int, help="as for run (small test bundles)")
     repro.add_argument("--validate-rows", type=int, help="as for run (small test bundles)")
     repro.set_defaults(handler=_verify_repro)
+
+    other = sub.add_parser("othergame", help="score a config on Metrica's public sample game 3")
+    other.add_argument("--root", help="checkout of github.com/metrica-sports/sample-data")
+    other.add_argument("--config", default=str(DEFAULT_CONFIG))
+    other.add_argument("--bootstrap", type=int, default=0, help="bootstrap draws, e.g. 1000")
+    other.add_argument("--result", help="also write a Markdown results file")
+    other.add_argument("--owner", help="name written in the results file")
+    other.add_argument("--notes", default="", help="notes written in the results file")
+    other.set_defaults(handler=_othergame)
 
     score = sub.add_parser("score", help="official scores on every validation window")
     score.add_argument("csv", help="a full-length frame,label file")
