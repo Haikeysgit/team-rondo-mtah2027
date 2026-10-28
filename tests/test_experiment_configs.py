@@ -44,3 +44,19 @@ def test_an_in_play_config_is_accepted_by_the_decoder_and_the_emission(name):
     config = load(CONFIGS / "experiments" / f"{name}.toml")
     ViterbiParams.from_dict(config["decoder_params"])
     build_params(RulesParams, config["emission_params"], "rules_v0")
+
+
+# Shorter control: the default with only min_control_frames changed (frames close to a slow ball).
+SHORT_CONTROL = {"control-20": 20, "control-25": 25, "control-30": 30, "control-35": 35}
+
+
+@pytest.mark.parametrize("name", sorted(SHORT_CONTROL))
+def test_a_short_control_config_is_the_default_with_only_min_control_frames_changed(name):
+    default = load(CONFIGS / "default.toml")
+    config = load(CONFIGS / "experiments" / f"{name}.toml")
+
+    expected = {key: dict(val) if isinstance(val, dict) else val for key, val in default.items()}
+    expected["emission_params"]["min_control_frames"] = SHORT_CONTROL[name]
+    assert config == expected
+    ViterbiParams.from_dict(config["decoder_params"])
+    build_params(RulesParams, config["emission_params"], "rules_v0")

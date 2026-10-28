@@ -1,0 +1,21 @@
+# Experiment: the default with control counted once a team's run of control lasts 20 frames
+# (0.8 s, first to last control frame) instead of 50 (2 s).
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+min_control_frames = 20
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+dead_exit_cost = 25.0
+restart_bonus = 6.0
