@@ -11,6 +11,9 @@ emission = "rules_v0"
 decoder = "viterbi"
 
 [emission_params]
+# A team's run of control counts as evidence once it lasts 25 frames (1 s), first to last control
+# frame. 50 (2 s) merged possessions on the three sample games; 20 to 30 score the same.
+min_control_frames = 25
 
 [decoder_params]
 switch_cost = 8.0

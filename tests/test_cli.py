@@ -87,7 +87,13 @@ def test_default_config_is_valid_toml():
         cfg = tomllib.load(handle)
     assert cfg["emission"] == "rules_v0" and cfg["decoder"] == "viterbi"
     assert cfg["decoder_params"]["switch_cost"] == 8.0
-    assert len(cfg["signals"]) == 6 and cfg["emission_params"] == {}
+    assert len(cfg["signals"]) == 6
+    from rondo.decoder.viterbi import ViterbiParams
+    from rondo.emissions.base import build_params
+    from rondo.emissions.rules import RulesParams
+
+    build_params(RulesParams, cfg["emission_params"], "rules_v0")
+    ViterbiParams.from_dict(cfg["decoder_params"])
 
 
 def test_cli_score_prints_the_official_numbers_per_window(capsys, tmp_path):
