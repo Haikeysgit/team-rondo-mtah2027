@@ -143,7 +143,7 @@ def _error_breakdown(root: Path, game: int, pred: pd.Series, truth: pd.Series) -
 
 
 def _print_error_breakdown(label: str, moments: pd.DataFrame) -> None:
-    """Counts only (hard rule 4): how many of each status, and which event kind they cluster
+    """Counts only: how many of each status, and which event kind they cluster
     around, never the frames themselves."""
     totals = moments["status"].value_counts()
     summary = ", ".join(f"{status} {int(totals.get(status, 0))}" for status in totals.index)

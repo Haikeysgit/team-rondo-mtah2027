@@ -326,7 +326,7 @@ def nearest_event_kind(events: pd.DataFrame, frame: int, max_gap: int = 25) -> s
     (1 s by default); ``"none"`` with nothing that close, or no events at all.
 
     For characterising an error frame: what was actually happening there (a restart, a challenge,
-    the ball out of play, ...), read off the public event log instead of a video nobody may use.
+    the ball out of play, ...), read off the public event log: the sample games have no video.
     """
     if events.empty:
         return "none"
