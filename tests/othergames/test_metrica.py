@@ -8,7 +8,12 @@ import pandas as pd
 import pytest
 
 from rondo.contracts import validate_frames, validate_players, validate_tags
-from rondo.othergames.metrica import load_sample_game, possession_from_events, read_events
+from rondo.othergames.metrica import (
+    load_sample_game,
+    nearest_event_kind,
+    possession_from_events,
+    read_events,
+)
 from rondo.pipeline import run
 from tests.othergames.fixtures import event, write_game
 
@@ -216,3 +221,76 @@ def test_cli_scores_every_game_present_and_all_together(capsys, tmp_path):
     assert main(["othergame", "--root", str(tmp_path)]) == 0
     rows = [line.split()[0] for line in capsys.readouterr().out.splitlines()[1:]]
     assert rows == ["sample1", "sample3", "all"]
+
+
+# -- error breakdown by event kind -----------------------------------------------------------------
+
+
+def test_nearest_event_kind_reads_off_the_event_covering_the_frame(tmp_path):
+    from rondo.othergames.metrica import load_events
+
+    write_game(tmp_path)
+    events = load_events(tmp_path, 3)
+    assert nearest_event_kind(events, 20) == "CARRY"  # inside the CARRY event's own span
+
+
+def test_nearest_event_kind_falls_back_to_the_closest_one_nearby(tmp_path):
+    from rondo.othergames.metrica import load_events
+
+    write_game(tmp_path)
+    events = load_events(tmp_path, 3)
+    assert nearest_event_kind(events, 46) == "BALL OUT"  # a few rows after it ends, nothing between
+
+
+def test_nearest_event_kind_is_none_far_from_every_event(tmp_path):
+    from rondo.othergames.metrica import load_events
+
+    write_game(tmp_path)
+    events = load_events(tmp_path, 3)
+    assert nearest_event_kind(events, 199, max_gap=5) == "none"  # 19 rows past the last event
+
+
+def test_nearest_event_kind_of_no_events_at_all():
+    assert nearest_event_kind(pd.DataFrame(columns=["start", "end", "kind"]), 10) == "none"
+
+
+def test_load_events_agrees_with_answer_key_on_which_events_it_used(tmp_path, game):
+    from rondo.othergames.metrica import answer_key, load_events
+
+    write_game(tmp_path / "again")
+    events = load_events(tmp_path / "again", 3)
+    truth = possession_from_events(events, game.meta)
+    assert truth.equals(answer_key(tmp_path / "again", 3, game.meta))
+
+
+def test_cli_errors_breaks_missed_and_spurious_down_by_event_kind(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--errors"]) == 0
+    out = capsys.readouterr().out
+    assert "sample3 errors (" in out
+    # one indented "status  event kind  count" line per (status, event kind) pair found; event
+    # kind can itself contain a space ("BALL OUT", "FAULT RECEIVED"), so just check the ends
+    lines = [line for line in out.splitlines() if line.startswith("  ")]
+    assert lines and all(line.split()[0] in ("missed", "spurious", "late") for line in lines)
+    assert lines and all(line.split()[-1].isdigit() for line in lines)
+
+
+def test_cli_errors_combines_every_game_once_more_than_one_is_scored(capsys, tmp_path):
+    from rondo.cli import main
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path, game=1)
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--errors"]) == 0
+    out = capsys.readouterr().out
+    assert "sample1 errors (" in out and "sample3 errors (" in out and "all errors (" in out
+
+
+def test_cli_without_errors_prints_no_breakdown(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path)]) == 0
+    assert "errors (" not in capsys.readouterr().out

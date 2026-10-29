@@ -308,14 +308,34 @@ def read_events_csv(path: Path) -> pd.DataFrame:
     return table.sort_values(["start", "end"], kind="stable", ignore_index=True)
 
 
-def answer_key(root: Path, game: int, meta: Meta) -> pd.Series:
-    """The full-length answer key of sample game ``game``, from its events."""
+def load_events(root: Path, game: int) -> pd.DataFrame:
+    """Game ``game``'s events, as the common table (``start, end, kind, subtypes, team, half``)."""
     folder = game_folder(root, game)
     if game == 3:
-        events = read_events(folder / EVENTS, home_team_id(root))
-    else:
-        events = read_events_csv(folder / f"Sample_Game_{game}_RawEventsData.csv")
-    return possession_from_events(events, meta)
+        return read_events(folder / EVENTS, home_team_id(root))
+    return read_events_csv(folder / f"Sample_Game_{game}_RawEventsData.csv")
+
+
+def answer_key(root: Path, game: int, meta: Meta) -> pd.Series:
+    """The full-length answer key of sample game ``game``, from its events."""
+    return possession_from_events(load_events(root, game), meta)
+
+
+def nearest_event_kind(events: pd.DataFrame, frame: int, max_gap: int = 25) -> str:
+    """The ``kind`` of the event covering ``frame``, or the closest one within ``max_gap`` rows
+    (1 s by default); ``"none"`` with nothing that close, or no events at all.
+
+    For characterising an error frame: what was actually happening there (a restart, a challenge,
+    the ball out of play, ...), read off the public event log instead of a video nobody may use.
+    """
+    if events.empty:
+        return "none"
+    within = events[(events["start"] <= frame) & (frame <= events["end"])]
+    if not within.empty:
+        return str(within.iloc[-1]["kind"])
+    gap = np.minimum((events["start"] - frame).abs(), (events["end"] - frame).abs())
+    closest = gap.idxmin()
+    return str(events.loc[closest, "kind"]) if gap.loc[closest] <= max_gap else "none"
 
 
 def _dead_from(e) -> int | None:
