@@ -130,6 +130,30 @@ def _verify_repro(args: argparse.Namespace) -> int:
     return 0 if same else 1
 
 
+def _error_breakdown(root: Path, game: int, pred: pd.Series, truth: pd.Series) -> pd.DataFrame:
+    """``error_moments(pred, truth)`` with an ``event`` column: the public event log's own name
+    for what was happening at each missed, spurious or late frame."""
+    from rondo.othergames.metrica import load_events, nearest_event_kind
+    from rondo.viz.errors import error_moments
+
+    events = load_events(root, game)
+    out = error_moments(pred, truth)
+    out["event"] = [nearest_event_kind(events, frame) for frame in out["frame"]]
+    return out
+
+
+def _print_error_breakdown(label: str, moments: pd.DataFrame) -> None:
+    """Counts only (hard rule 4): how many of each status, and which event kind they cluster
+    around, never the frames themselves."""
+    totals = moments["status"].value_counts()
+    summary = ", ".join(f"{status} {int(totals.get(status, 0))}" for status in totals.index)
+    print(f"{label} errors ({summary or 'none'}):")
+    grouped = moments.groupby(["status", "event"], observed=True).size()
+    counts = grouped.sort_values(ascending=False)
+    for (status, event), n in counts.items():
+        print(f"  {status:<9} {event:<14} {n}")
+
+
 def _print_table(table: pd.DataFrame) -> None:
     print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
     for row in table.itertuples(index=False):
@@ -171,7 +195,7 @@ def _othergame(args: argparse.Namespace) -> int:
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
 
-    tables, preds, truths = [], [], []
+    tables, preds, truths, moments = [], [], [], []
     for game in games:
         match = load_sample_game(root, game)
         truth = answer_key(root, game, match.meta)
@@ -180,6 +204,8 @@ def _othergame(args: argparse.Namespace) -> int:
         tables.append(table[table["window"] == f"sample{game}"])
         preds.append(pred)
         truths.append(truth)
+        if args.errors:
+            moments.append((game, _error_breakdown(root, game, pred, truth)))
     if len(games) > 1:
         gap = pd.Series(["X"])
         pred = pd.concat([part for p in preds for part in (p, gap)], ignore_index=True)
@@ -189,6 +215,12 @@ def _othergame(args: argparse.Namespace) -> int:
         tables.append(table[table["window"] == "all"])
     table = pd.concat(tables, ignore_index=True)
     _print_table(table)
+    if args.errors:
+        for game, breakdown in moments:
+            _print_error_breakdown(f"sample{game}", breakdown)
+        if len(moments) > 1:
+            combined = pd.concat([breakdown for _, breakdown in moments], ignore_index=True)
+            _print_error_breakdown("all", combined)
     if args.result:
         command = (
             f"rondo othergame --game {args.game} --config {args.config} "
@@ -361,6 +393,11 @@ def _parser() -> argparse.ArgumentParser:
     other.add_argument("--result", help="also write a Markdown results file")
     other.add_argument("--owner", help="name written in the results file")
     other.add_argument("--notes", default="", help="notes written in the results file")
+    other.add_argument(
+        "--errors",
+        action="store_true",
+        help="also break missed/spurious/late counts down by the nearest event kind",
+    )
     other.set_defaults(handler=_othergame)
 
     score = sub.add_parser("score", help="official scores on every validation window")
