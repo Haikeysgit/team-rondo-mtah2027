@@ -84,6 +84,26 @@ def test_sustained_control_by_the_other_team_switches_once_where_it_starts():
     assert runs(out) == [("H", 200), ("A", 75)]
 
 
+@pytest.mark.parametrize(
+    "first, second, new_team",
+    [(H_EVIDENCE, A_EVIDENCE, "A"), (A_EVIDENCE, H_EVIDENCE, "H")],
+)
+@pytest.mark.parametrize("level", [NO_BALL, (0.37, 0.37, 0.26)])
+def test_a_switch_across_a_gap_with_no_evidence_lands_where_the_new_team_gains_control(
+    first, second, new_team, level
+):
+    # While the ball travels between teams, H and A are level, so every moment scores the same.
+    out = decode(emissions((100, first), (1000, level), (100, second)))
+    old_team = "H" if new_team == "A" else "A"
+    assert runs(out) == [(old_team, 1100), (new_team, 100)]
+
+
+def test_evidence_in_the_gap_still_decides_when_the_switch_happens():
+    leaning_to_a = (0.44, 0.46, 0.10)
+    out = decode(emissions((100, H_EVIDENCE), (50, leaning_to_a), (100, A_EVIDENCE)))
+    assert runs(out) == [("H", 100), ("A", 150)]
+
+
 def test_ten_seconds_without_the_ball_keeps_the_possession():
     out = decode(emissions((100, H_EVIDENCE), (250, NO_BALL), (100, H_EVIDENCE)))
     assert runs(out) == [("H", 450)]
