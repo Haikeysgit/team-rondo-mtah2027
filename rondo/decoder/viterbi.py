@@ -29,8 +29,9 @@ import pandas as pd
 from rondo.contracts import Meta, is_restart_code
 from rondo.registry import register_decoder
 
-LABELS = ("H", "A", "D")  # state order; ties go to the earlier state
+LABELS = ("H", "A", "D")  # state order
 H, A, D = 0, 1, 2
+TIE_TOLERANCE = 1e-6  # far below any real evidence, far above rounding in the running scores
 MIN_PROB = 1e-9
 NO_ANCHOR = -1
 ANY_TEAM = 2  # anchor value of a team-blind restart window
@@ -163,18 +164,26 @@ def _restart_anchor(tags: pd.DataFrame, n_frames: int, blind: bool = False) -> n
 def _best_path(
     log_e: np.ndarray, base: np.ndarray, anchored: dict[int, np.ndarray], anchor: np.ndarray
 ) -> np.ndarray:
-    """State index per frame on the highest-scoring path; ties go to the earlier state."""
+    """State index per frame on the highest-scoring path.
+
+    While the ball travels between teams, H and A are level, so every moment to switch scores the
+    same. Such a tie goes to the latest moment, where the new team gains control, whichever team
+    that is: walking the path backwards, a switch is preferred to staying when they are within
+    ``TIE_TOLERANCE`` (scores that should be equal differ by rounding). A tie over the final label
+    goes to the earlier state.
+    """
     n = len(log_e)
     path = np.empty(n, dtype=np.int8)
     if n == 0:
         return path
     states = np.arange(len(LABELS))
+    prefer_switch = np.eye(len(LABELS)) * TIE_TOLERANCE
     back = np.zeros((n, len(LABELS)), dtype=np.int8)
     delta = log_e[0].copy()
     for t in range(1, n):
         transition = base if anchor[t] == NO_ANCHOR else anchored[int(anchor[t])]
         scores = delta[:, None] + transition
-        best = scores.argmax(axis=0)
+        best = (scores - prefer_switch).argmax(axis=0)
         back[t] = best
         delta = scores[best, states] + log_e[t]
     state = int(delta.argmax())
