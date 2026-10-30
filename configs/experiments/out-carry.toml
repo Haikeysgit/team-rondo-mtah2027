@@ -1,0 +1,24 @@
+# Experiment: the default, plus a ball last seen out of bounds counting as still out until it is
+# seen again (tracking usually loses the ball as it leaves the pitch).
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+# A team's run of control counts as evidence once it lasts 25 frames (1 s), first to last control
+# frame. 50 (2 s) merged possessions on the three sample games; 20 to 30 score the same.
+min_control_frames = 25
+out_carry_weight = 5.0
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+dead_exit_cost = 25.0
+restart_bonus = 6.0

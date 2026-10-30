@@ -207,6 +207,60 @@ def test_a_long_gap_splits_the_run():
     assert abs(out["p_H"].iloc[10] - out["p_A"].iloc[10]) < 1e-9
 
 
+# The tracking usually loses the ball as it leaves the pitch: out of bounds for a moment, then gone.
+BALL_OUT = {"ball_in_bounds": False}
+BALL_IN = {"ball_in_bounds": True}
+JOGGING = {"team_speed_mean_m_s": 1.4}  # players moving: not a stoppage on its own
+
+
+def test_by_default_a_ball_lost_after_going_out_gives_no_dead_evidence():
+    out = predict(signals(BALL_OUT, {**BALL_MISSING, **JOGGING}))
+    assert out["p_D"].iloc[1] < 0.2
+
+
+def test_with_a_carry_weight_a_ball_lost_after_going_out_stays_dead():
+    out = predict(signals(BALL_OUT, {**BALL_MISSING, **JOGGING}), out_carry_weight=5.0)
+    assert out["p_D"].iloc[1] > 0.8
+
+
+def test_a_ball_lost_while_on_the_pitch_is_not_carried_as_out():
+    out = predict(signals(BALL_IN, {**BALL_MISSING, **JOGGING}), out_carry_weight=5.0)
+    assert out["p_D"].iloc[1] < 0.2
+
+
+def test_seeing_the_ball_on_the_pitch_again_ends_the_carry():
+    rows = [BALL_OUT, BALL_MISSING, BALL_IN, BALL_MISSING]
+    out = predict(signals(*[{**row, **JOGGING} for row in rows]), out_carry_weight=5.0)
+    assert out["p_D"].iloc[1] > 0.8
+    assert out["p_D"].iloc[3] < 0.2
+
+
+def test_a_ball_never_seen_yet_is_not_carried_as_out():
+    out = predict(signals({**BALL_MISSING, **JOGGING}), out_carry_weight=5.0)
+    assert out["p_D"].iloc[0] < 0.2
+
+
+def test_a_carried_ball_out_is_one_dead_spell_until_the_ball_is_seen_again():
+    rows = (
+        [H_CONTROL] * 150
+        + [{**OPEN_PLAY, **BALL_OUT, **JOGGING}] * 3
+        + [{**BALL_MISSING, **JOGGING}] * 300
+        + [H_CONTROL] * 150
+    )
+    labels = decode(rows, out_carry_weight=5.0)
+    assert labels == ["H"] * 150 + ["D"] * 303 + ["H"] * 150
+
+
+def test_today_a_ball_lost_after_going_out_is_read_as_play_going_on():
+    rows = (
+        [H_CONTROL] * 150
+        + [{**OPEN_PLAY, **BALL_OUT, **JOGGING}] * 3
+        + [{**BALL_MISSING, **JOGGING}] * 300
+        + [H_CONTROL] * 150
+    )
+    assert set(decode(rows)) == {"H"}
+
+
 # A challenge: an A player is nearest the ball, but an H player is only 0.3 m farther away.
 A_CHALLENGE = {
     "nearest_team": "A",

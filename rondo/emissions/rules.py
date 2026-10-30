@@ -14,6 +14,9 @@ alive unless something says otherwise. Evidence then adds to one label's score:
   ``contest_margin_m`` farther from it (a challenge, a defender pressing the keeper). The default
   margin of 0 never marks a ball contested.
 - **Ball out of bounds** -> ``out_weight`` to ``D``. Control is not counted while the ball is out.
+  Tracking usually loses the ball as it leaves the pitch, so with ``out_carry_weight`` a ball last
+  seen out of bounds counts as still out, for that weight, until it is seen again. The default of
+  0 turns this off.
 - **Stoppage**: players are slow on average (``team_speed_mean_m_s < stopped_speed_ms``) *and*
   the ball is not moving like play (missing, slower than ``still_ball_ms``, or inside a Smart
   Tagging restart window) -> ``stopped_weight`` to ``D``. Slow players alone are not enough: a
@@ -61,6 +64,7 @@ class RulesParams:
     max_control_gap_frames: int = 75
     contest_margin_m: float = 0.0
     out_weight: float = 5.0
+    out_carry_weight: float = 0.0
     stopped_speed_ms: float = 1.0
     still_ball_ms: float = 0.5
     stopped_weight: float = 4.0
@@ -92,6 +96,12 @@ def _sustained(control: np.ndarray, team: np.ndarray, min_frames: int, max_gap: 
     ends = np.maximum.reduceat(idx, np.flatnonzero(new_run))
     keep[idx] = (ends - starts + 1)[run_id] >= min_frames
     return keep
+
+
+def _last_seen_out(missing: np.ndarray, out: np.ndarray) -> np.ndarray:
+    """True on frames where the ball is missing and was out of bounds when last seen."""
+    last_seen = np.maximum.accumulate(np.where(~missing, np.arange(len(missing)), -1))
+    return missing & (last_seen >= 0) & out[last_seen]
 
 
 @register_emission("rules_v0")
@@ -133,6 +143,7 @@ class RulesV0:
             scores[:, team] += p.prior_weight * (prior == label)
 
         scores[:, D] += p.out_weight * out
+        scores[:, D] += p.out_carry_weight * _last_seen_out(missing, out)
         ball_still = missing | (speed < p.still_ball_ms) | restart
         scores[:, D] += p.stopped_weight * ((players < p.stopped_speed_ms) & ball_still)
 

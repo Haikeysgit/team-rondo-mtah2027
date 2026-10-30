@@ -46,6 +46,16 @@ def test_an_in_play_config_is_accepted_by_the_decoder_and_the_emission(name):
     build_params(RulesParams, config["emission_params"], "rules_v0")
 
 
+def test_the_out_carry_config_is_the_default_with_only_the_carry_weight_added():
+    default = load(CONFIGS / "default.toml")
+    config = load(CONFIGS / "experiments" / "out-carry.toml")
+
+    expected = {key: dict(val) if isinstance(val, dict) else val for key, val in default.items()}
+    expected["emission_params"]["out_carry_weight"] = 5.0
+    assert config == expected
+    build_params(RulesParams, config["emission_params"], "rules_v0")
+
+
 # Shorter control: the default with only min_control_frames changed (frames close to a slow ball).
 SHORT_CONTROL = {"control-20": 20, "control-25": 25, "control-30": 30, "control-35": 35}
 
