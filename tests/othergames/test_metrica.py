@@ -294,3 +294,51 @@ def test_cli_without_errors_prints_no_breakdown(capsys, tmp_path):
     write_game(tmp_path)
     assert main(["othergame", "--root", str(tmp_path)]) == 0
     assert "errors (" not in capsys.readouterr().out
+
+
+# -- quiet-ball check ----------------------------------------------------------------------------
+
+
+def test_quiet_ball_check_splits_quiet_and_active_spurious_switches(tmp_path):
+    import rondo.signals.ball  # noqa: F401 - registers the signals _quiet_ball_check needs
+    from rondo.cli import _quiet_ball_check
+    from tests.synthetic import Step, make_match
+
+    write_game(tmp_path)  # its events are all within frames 1-200, nothing near 1000+
+    match, truth = make_match(
+        [Step("restart", "H", 6), Step("dribble", "H", 6)], n_frames=1500, start=1000
+    )
+    pred = truth.copy()
+    pred.loc[1060:1089] = "A"  # a false switch while the ball sits held at the restart
+    pred.loc[1200:1229] = "A"  # a false switch while the ball is genuinely moving
+
+    stats = _quiet_ball_check(tmp_path, 3, match, pred, truth)
+    assert stats == {"n": 4, "quiet": 2, "active": 2, "untracked": 0}
+
+
+def test_quiet_ball_check_is_a_noop_with_no_spurious_switches(tmp_path):
+    """The empty-DataFrame edge case: spurious[[]] used to drop every column, not every row."""
+    import rondo.signals.ball  # noqa: F401
+    from rondo.cli import _quiet_ball_check
+    from tests.synthetic import Step, make_match
+
+    write_game(tmp_path)
+    match, truth = make_match([Step("dribble", "H", 4)], n_frames=1500, start=1000)
+    stats = _quiet_ball_check(tmp_path, 3, match, truth, truth)  # pred == truth: nothing spurious
+    assert stats == {"n": 0, "quiet": 0, "active": 0, "untracked": 0}
+
+
+def test_cli_quiet_ball_prints_a_report(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--quiet-ball"]) == 0
+    assert "sample3 quiet-ball check (" in capsys.readouterr().out
+
+
+def test_cli_without_quiet_ball_prints_no_report(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path)]) == 0
+    assert "quiet-ball check" not in capsys.readouterr().out
