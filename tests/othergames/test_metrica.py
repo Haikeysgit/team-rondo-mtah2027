@@ -294,3 +294,52 @@ def test_cli_without_errors_prints_no_breakdown(capsys, tmp_path):
     write_game(tmp_path)
     assert main(["othergame", "--root", str(tmp_path)]) == 0
     assert "errors (" not in capsys.readouterr().out
+
+
+# -- signal health ------------------------------------------------------------------------------
+
+
+def test_cli_signals_prints_coverage_and_distribution_stats(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--signals"]) == 0
+    out = capsys.readouterr().out
+    assert "sample3 signals (200 frames):" in out
+    for line in ("ball tracked", "ball speed", "nearest player", "team speed", "nobody tracked"):
+        assert any(row.strip().startswith(line) for row in out.splitlines())
+
+
+def test_cli_signals_combines_every_game_present(capsys, tmp_path):
+    from rondo.cli import main
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path, game=1)
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--signals"]) == 0
+    out = capsys.readouterr().out
+    assert "sample1 signals (" in out and "sample3 signals (" in out
+    # no combined "all signals" row: coverage stats are per game, not a score to pool
+    assert "all signals (" not in out
+
+
+def test_cli_without_signals_prints_no_coverage_report(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path)]) == 0
+    assert "signals (" not in capsys.readouterr().out
+
+
+def test_signal_health_matches_the_signals_directly(tmp_path):
+    from rondo.cli import _signal_health
+    from rondo.registry import SIGNALS
+
+    write_game(tmp_path)
+    match = load_sample_game(tmp_path)
+    health = _signal_health(match)
+
+    bounds = SIGNALS["ball_bounds"](match)
+    tracked = bounds["ball_in_bounds"].notna()
+    assert health["frames"] == match.meta.n_frames
+    assert health["ball_tracked_pct"] == pytest.approx(100 * tracked.sum() / len(tracked))

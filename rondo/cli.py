@@ -154,6 +154,50 @@ def _print_error_breakdown(label: str, moments: pd.DataFrame) -> None:
         print(f"  {status:<9} {event:<14} {n}")
 
 
+def _signal_health(match) -> dict[str, float]:
+    """Coverage and distribution stats from the four ball/player signals, for a quick sanity
+    check on a game we have not tuned anything against yet: is the ball tracked about as often,
+    and moving and sitting about as far from players, as on the provided match?"""
+    from rondo.registry import SIGNALS
+
+    n = match.meta.n_frames
+    nearest = SIGNALS["ball_nearest"](match)
+    motion = SIGNALS["ball_motion"](match)
+    bounds = SIGNALS["ball_bounds"](match)
+    team = SIGNALS["team_motion"](match)
+
+    tracked = bounds["ball_in_bounds"].notna()
+    speed = motion.loc[tracked.to_numpy(), "ball_speed_ms"].dropna()
+    dist = nearest.loc[tracked.to_numpy(), "nearest_dist_m"].dropna()
+    team_speed = team["team_speed_mean_m_s"].dropna()
+
+    return {
+        "frames": n,
+        "ball_tracked_pct": 100 * tracked.sum() / n,
+        "ball_speed_median_ms": speed.median() if len(speed) else float("nan"),
+        "ball_speed_mean_ms": speed.mean() if len(speed) else float("nan"),
+        "nearest_dist_median_m": dist.median() if len(dist) else float("nan"),
+        "nearest_dist_mean_m": dist.mean() if len(dist) else float("nan"),
+        "team_speed_mean_ms": team_speed.mean() if len(team_speed) else float("nan"),
+        "nobody_tracked_pct": 100 * team["team_speed_mean_m_s"].isna().sum() / n,
+    }
+
+
+def _print_signal_health(label: str, health: dict[str, float]) -> None:
+    print(f"{label} signals ({int(health['frames'])} frames):")
+    print(f"  ball tracked      {health['ball_tracked_pct']:.1f}%")
+    print(
+        f"  ball speed        median {health['ball_speed_median_ms']:.1f} m/s, "
+        f"mean {health['ball_speed_mean_ms']:.1f} m/s (tracked frames)"
+    )
+    print(
+        f"  nearest player    median {health['nearest_dist_median_m']:.1f} m, "
+        f"mean {health['nearest_dist_mean_m']:.1f} m (ball tracked frames)"
+    )
+    print(f"  team speed        mean {health['team_speed_mean_ms']:.1f} m/s")
+    print(f"  nobody tracked    {health['nobody_tracked_pct']:.1f}% of frames")
+
+
 def _print_table(table: pd.DataFrame) -> None:
     print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
     for row in table.itertuples(index=False):
@@ -195,7 +239,7 @@ def _othergame(args: argparse.Namespace) -> int:
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
 
-    tables, preds, truths, moments = [], [], [], []
+    tables, preds, truths, moments, health = [], [], [], [], []
     for game in games:
         match = load_sample_game(root, game)
         truth = answer_key(root, game, match.meta)
@@ -206,6 +250,8 @@ def _othergame(args: argparse.Namespace) -> int:
         truths.append(truth)
         if args.errors:
             moments.append((game, _error_breakdown(root, game, pred, truth)))
+        if args.signals:
+            health.append((game, _signal_health(match)))
     if len(games) > 1:
         gap = pd.Series(["X"])
         pred = pd.concat([part for p in preds for part in (p, gap)], ignore_index=True)
@@ -221,6 +267,9 @@ def _othergame(args: argparse.Namespace) -> int:
         if len(moments) > 1:
             combined = pd.concat([breakdown for _, breakdown in moments], ignore_index=True)
             _print_error_breakdown("all", combined)
+    if args.signals:
+        for game, stats in health:
+            _print_signal_health(f"sample{game}", stats)
     if args.result:
         command = (
             f"rondo othergame --game {args.game} --config {args.config} "
@@ -397,6 +446,11 @@ def _parser() -> argparse.ArgumentParser:
         "--errors",
         action="store_true",
         help="also break missed/spurious/late counts down by the nearest event kind",
+    )
+    other.add_argument(
+        "--signals",
+        action="store_true",
+        help="also print ball/player signal coverage: tracked %%, speeds, nearest-player distance",
     )
     other.set_defaults(handler=_othergame)
 
