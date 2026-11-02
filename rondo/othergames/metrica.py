@@ -18,10 +18,10 @@ the same FIFA EPTS tracking format as the provided match; games 1 and 2 use Metr
   whose event log records carries, the new team logs another action of its own
   (``FOLLOW_UP_EVENTS``: a pass, carry or shot) after the spell's first event. A log without any
   ``CARRY`` (games 1 and 2) cannot tell a ball dribbled and then lost from a lone touch, so there
-  the 2 s time test stands alone. Otherwise the spell stays with the team that had the ball. The annotators log every
-  recovery, even a one-touch one that is lost straight back, while the official answers count a
-  change only under control. Only events decide this, never tracking, which is the system's own
-  sensor. A spell starting from a dead ball (a restart) always counts.
+  the 2 s time test stands alone. Otherwise the spell stays with the team that had the ball. The
+  annotators log every recovery, even a one-touch one that is lost straight back, while the
+  official answers count a change only under control. Only events decide this, never tracking,
+  which is the system's own sensor. A spell starting from a dead ball (a restart) always counts.
 - The ball is dead from where it leaves the pitch (``BALL OUT``, a ``SHOT`` that goes ``OUT`` or
   is a ``GOAL``, at the event's end frame), and from a stoppage (``FAULT RECEIVED``, a
   ``CHALLENGE`` with ``FAULT`` and no ``ADVANTAGE``, a ``BALL LOST`` or ``PASS`` for ``OFFSIDE``,
