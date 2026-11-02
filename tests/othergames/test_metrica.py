@@ -230,6 +230,30 @@ def test_the_earlier_key_is_still_available_for_comparison(tmp_path, game):
     assert labels(key(tmp_path, game, held(), **earlier))[:3] == ["X", "H", "A"]
 
 
+def without_carries(events):
+    """The same events with every ``CARRY`` logged as a ``PASS``: a log that records no carries."""
+    return [{**e, "type": {"name": "PASS"}} if e["type"]["name"] == "CARRY" else e for e in events]
+
+
+def test_held_and_brief_fixtures_log_carries():
+    assert any(e["type"]["name"] == "CARRY" for e in held())
+    assert not any(e["type"]["name"] == "CARRY" for e in without_carries(held()))
+
+
+def test_without_carries_in_the_log_a_long_spell_counts_on_time_alone(tmp_path, game):
+    assert labels(key(tmp_path, game, without_carries(held())))[:3] == ["X", "H", "A"]
+
+
+def test_without_carries_in_the_log_two_quick_passes_are_still_not_control(tmp_path, game):
+    two = [e for e in without_carries(BRIEF_PASSES) if e["start"]["frame"] != 53]
+    assert labels(key(tmp_path, game, two)) == ["X", "H", "X"]
+
+
+def test_the_follow_up_test_can_still_be_forced_on_a_log_without_carries(tmp_path, game):
+    truth = key(tmp_path, game, without_carries(held()), require_follow_up=True)
+    assert labels(truth) == ["X", "H", "X"]
+
+
 # -- games 1 and 2 (CSV) --------------------------------------------------------------------------
 
 
