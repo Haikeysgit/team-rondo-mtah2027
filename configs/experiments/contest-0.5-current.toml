@@ -1,0 +1,26 @@
+# Experiment (in-play failures, retried on the current default): the default with one change.
+# A ball is contested, and nobody's control, when the other team's nearest player is less than
+# 0.5 m farther from it. contest-0.5.toml tested the same margin on the old stay-dead-60 stack
+# (rolled back 2026-10-27); this is the same idea on min_control_frames 25 and out_carry_weight
+# 5, which were not yet in the default when that one was tried.
+signals = [
+  "ball_nearest",
+  "ball_motion",
+  "ball_bounds",
+  "team_motion",
+  "tag_restarts",
+  "tag_team_prior",
+]
+emission = "rules_v0"
+decoder = "viterbi"
+
+[emission_params]
+min_control_frames = 25
+out_carry_weight = 5.0
+contest_margin_m = 0.5
+
+[decoder_params]
+switch_cost = 8.0
+dead_entry_cost = 25.0
+dead_exit_cost = 25.0
+restart_bonus = 6.0
