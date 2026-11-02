@@ -46,6 +46,12 @@ def test_an_in_play_config_is_accepted_by_the_decoder_and_the_emission(name):
     build_params(RulesParams, config["emission_params"], "rules_v0")
 
 
+def test_the_starting_defaults_config_is_the_default_with_no_emission_settings():
+    expected = load(CONFIGS / "default.toml")
+    expected["emission_params"] = {}
+    assert load(CONFIGS / "experiments" / "starting-defaults.toml") == expected
+
+
 def test_the_out_carry_config_is_the_submitted_default():
     assert load(CONFIGS / "experiments" / "out-carry.toml") == load(CONFIGS / "default.toml")
 
