@@ -12,11 +12,14 @@ the same FIFA EPTS tracking format as the provided match; games 1 and 2 use Metr
 - A team has the ball from the start of its first possession event after the other team's
   (``PASS``, ``CARRY``, ``RECOVERY``, ``SET PIECE``, ``SHOT``, ``BALL LOST``, ``BALL OUT``):
   the spell starts where control began. ``CHALLENGE`` events change nothing.
-- **Control, as in our possession rules:** a spell won from the other team in play counts only
-  if it lasts ``MIN_CONTROL_FRAMES`` (2 s) or holds ``MIN_PASSES`` (2) passes; otherwise it stays
-  with the team that had the ball. The annotators log every recovery, even a one-touch one, while
-  the official answers count a change only under control. A spell starting from a dead ball (a
-  restart) always counts.
+- **Control, as in the official hint** ("keeps the ball for a few seconds" or "more than two
+  consecutive passes"): a spell won from the other team in play counts only if it holds
+  ``MIN_PASSES`` (3) passes of the new team, or lasts ``MIN_CONTROL_FRAMES`` (2 s) and the new team
+  logs another action of its own (``FOLLOW_UP_EVENTS``: a pass, carry or shot) after the spell's
+  first event; otherwise it stays with the team that had the ball. The annotators log every
+  recovery, even a one-touch one that is lost straight back, while the official answers count a
+  change only under control. Only events decide this, never tracking, which is the system's own
+  sensor. A spell starting from a dead ball (a restart) always counts.
 - The ball is dead from where it leaves the pitch (``BALL OUT``, a ``SHOT`` that goes ``OUT`` or
   is a ``GOAL``, at the event's end frame), and from a stoppage (``FAULT RECEIVED``, a
   ``CHALLENGE`` with ``FAULT`` and no ``ADVANTAGE``, a ``BALL LOST`` or ``PASS`` for ``OFFSIDE``,
@@ -58,7 +61,8 @@ SPEED_HALF_WINDOW = 2  # frames either side of the centred difference for player
 POSSESSION_EVENTS = {"PASS", "CARRY", "RECOVERY", "SET PIECE", "SHOT", "BALL LOST", "BALL OUT"}
 STOPPAGE_SUBTYPES = {"OFFSIDE", "HAND BALL", "REFEREE HIT"}
 MIN_CONTROL_FRAMES = 50  # 2 s, as ``RulesParams.min_control_frames``
-MIN_PASSES = 2
+MIN_PASSES = 3  # the official hint: "more than two consecutive passes"
+FOLLOW_UP_EVENTS = {"PASS", "CARRY", "SHOT"}  # an own action after winning the ball shows control
 
 
 def game_folder(root: Path, game: int = 3) -> Path:
@@ -354,8 +358,18 @@ def _dead_from(e) -> int | None:
     return None
 
 
-def possession_from_events(events: pd.DataFrame, meta: Meta) -> pd.Series:
-    """Full-length ``H/A/D/X`` labels from the events, by the rules in the module docstring."""
+def possession_from_events(
+    events: pd.DataFrame,
+    meta: Meta,
+    *,
+    min_passes: int = MIN_PASSES,
+    require_follow_up: bool = True,
+) -> pd.Series:
+    """Full-length ``H/A/D/X`` labels from the events, by the rules in the module docstring.
+
+    ``min_passes=2, require_follow_up=False`` gives the earlier, more generous control test, for
+    comparing scores across the change.
+    """
     labels = np.full(meta.n_frames, "X", dtype=object)
     for half, _first, last in meta.half_blocks:
         block = events[events["half"] == half]
@@ -378,22 +392,29 @@ def possession_from_events(events: pd.DataFrame, meta: Meta) -> pd.Series:
         stop = min(int(block["end"].max()), last) + 1
         if state is not None:
             labels[since:stop] = state
-    _require_control(labels, events)
+    _require_control(labels, events, min_passes, require_follow_up)
     return pd.Series(labels, index=pd.RangeIndex(meta.n_frames, name="frame"), name="label")
 
 
-def _require_control(labels: np.ndarray, events: pd.DataFrame) -> None:
+def _require_control(
+    labels: np.ndarray, events: pd.DataFrame, min_passes: int, require_follow_up: bool
+) -> None:
     """Give a spell won in play without control back to the team that had the ball, in place."""
     change = np.flatnonzero(labels[1:] != labels[:-1]) + 1
     starts = np.concatenate([[0], change])
     ends = np.concatenate([change, [len(labels)]])
-    passes = events[events["kind"] == "PASS"]
+    possession = events[events["kind"].isin(POSSESSION_EVENTS)]
     previous = None
     for start, end in zip(starts, ends, strict=True):
         label = labels[start]
         if label in ("H", "A") and previous in ("H", "A") and previous != label:
-            own = passes[(passes["team"] == label) & passes["start"].between(start, end - 1)]
-            if end - start < MIN_CONTROL_FRAMES and len(own) < MIN_PASSES:
+            own = possession[
+                (possession["team"] == label) & possession["start"].between(start, end - 1)
+            ]
+            passes = int((own["kind"] == "PASS").sum())
+            follow_up = bool(own["kind"].iloc[1:].isin(FOLLOW_UP_EVENTS).any())
+            held = end - start >= MIN_CONTROL_FRAMES and (follow_up or not require_follow_up)
+            if passes < min_passes and not held:
                 labels[start:end] = previous
                 label = previous
         previous = label
