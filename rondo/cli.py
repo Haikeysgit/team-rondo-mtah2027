@@ -30,6 +30,12 @@ def _check(args: argparse.Namespace) -> int:
     report = check_bundle(_data_dir(args.data_dir), expected_records=args.expected_records)
     for key, value in report.items():
         print(f"{key}: {value}")
+    if args.signals:  # the same report as ``othergame --signals``, to set the two side by side
+        from rondo import config as runtime_config
+
+        data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+        match = load_match(data_dir, expected_frames=args.expected_frames)
+        _print_signal_health("match", _signal_health(match))
     return 0
 
 
@@ -404,6 +410,12 @@ def _parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="aggregate sanity report on the data bundle")
     check.add_argument("--data-dir")
     check.add_argument("--expected-records", type=int)
+    check.add_argument("--expected-frames", type=int)
+    check.add_argument(
+        "--signals",
+        action="store_true",
+        help="also print ball/player signal coverage: tracked %%, speeds, nearest-player distance",
+    )
     check.set_defaults(handler=_check)
 
     tags = sub.add_parser("tags", help="how well Smart Tagging lines up with tracking and truth")
