@@ -353,9 +353,6 @@ def _label(args: argparse.Namespace) -> int:
     return 0
 
 
-PLAY_MARGIN_FRAMES = 75  # ~3s either side of an error frame at 25fps
-
-
 def _errors(args: argparse.Namespace) -> int:
     from rondo import config as runtime_config
     from rondo.eval import load_windows, read_labels
@@ -386,20 +383,6 @@ def _errors(args: argparse.Namespace) -> int:
         )
         change = f"{from_} -> {to}"
         print(f"{format_timestamp(row.frame)}  frame {row.frame:>7}  {row.status:<8} {change}")
-
-    if args.play:
-        from rondo.labeltool import app
-
-        n_frames = len(truth)
-        session = app.open_session(data_dir)  # the video is opened and counted once for all
-        try:
-            for row in top.itertuples(index=False):
-                start = max(0, row.frame - PLAY_MARGIN_FRAMES)
-                end = min(n_frames - 1, row.frame + PLAY_MARGIN_FRAMES)
-                window = f"err_{row.status}_{row.frame}"
-                app.run(data_dir, window, start, end, session=session, read_only=True)
-        finally:
-            session.close()
     return 0
 
 
@@ -498,7 +481,6 @@ def _parser() -> argparse.ArgumentParser:
     errors.add_argument("csv", help="a full-length frame,label file")
     errors.add_argument("--data-dir", help="hand-labelled windows are read from <data-dir>/labels")
     errors.add_argument("--window", required=True, help="truth window to compare against")
-    errors.add_argument("--play", action="store_true", help="open each one in the labeltool viewer")
     errors.set_defaults(handler=_errors)
     return parser
 
