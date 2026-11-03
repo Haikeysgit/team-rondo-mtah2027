@@ -165,21 +165,93 @@ def test_a_brief_spell_without_control_stays_with_the_team_that_had_the_ball(tmp
     assert runs(truth) == [("X", 0, 3), ("H", 4, 98), ("X", 99, 199)]
 
 
-def test_a_brief_spell_with_two_passes_is_control(tmp_path, game):
-    events = [
+def key(tmp_path, game, events, **rule):
+    folder = write_game(tmp_path / f"key{len(list(tmp_path.glob('key*')))}", events)
+    return possession_from_events(
+        read_events(folder / "Sample_Game_3_events.json", "TA"), game.meta, **rule
+    )
+
+
+def labels(truth: pd.Series) -> list[str]:
+    return [label for label, _, _ in runs(truth)]
+
+
+BRIEF_PASSES = [  # B wins the ball and passes quickly, for under 2 s, then A wins it back
+    event("SET PIECE", "A", 5, subtypes=["KICK OFF"]),
+    event("PASS", "A", 5, 40),
+    event("RECOVERY", "B", 41),
+    event("PASS", "B", 42, 46),
+    event("PASS", "B", 47, 52),
+    event("PASS", "B", 53, 57),
+    event("RECOVERY", "A", 60),
+    event("CARRY", "A", 60, 99),
+]
+
+
+def test_a_brief_spell_with_three_passes_is_control(tmp_path, game):
+    assert labels(key(tmp_path, game, BRIEF_PASSES))[:3] == ["X", "H", "A"]
+
+
+def test_a_brief_spell_with_only_two_passes_is_not_control(tmp_path, game):
+    two = [e for e in BRIEF_PASSES if e["start"]["frame"] != 53]
+    assert labels(key(tmp_path, game, two)) == ["X", "H", "X"]
+
+
+def held(*after_recovery):
+    """B wins the ball and keeps it over 2 s (frames 42 to 94), then A wins it back."""
+    return [
         event("SET PIECE", "A", 5, subtypes=["KICK OFF"]),
         event("PASS", "A", 5, 40),
         event("RECOVERY", "B", 41),
-        event("PASS", "B", 42, 46),
-        event("PASS", "B", 47, 52),  # two quick passes: control, even under 2 s
-        event("RECOVERY", "A", 60),
-        event("CARRY", "A", 60, 99),
+        *after_recovery,
+        event("RECOVERY", "A", 95),
+        event("CARRY", "A", 95, 99),
     ]
-    folder = write_game(tmp_path / "again", events)
-    truth = possession_from_events(
-        read_events(folder / "Sample_Game_3_events.json", "TA"), game.meta
-    )
-    assert [label for label, _, _ in runs(truth)][:3] == ["X", "H", "A"]
+
+
+def test_a_long_spell_with_no_action_after_winning_the_ball_is_not_control(tmp_path, game):
+    assert labels(key(tmp_path, game, held())) == ["X", "H", "X"]
+
+
+@pytest.mark.parametrize("kind", ["PASS", "CARRY", "SHOT"])
+def test_a_long_spell_with_an_own_action_after_winning_the_ball_is_control(tmp_path, game, kind):
+    assert labels(key(tmp_path, game, held(event(kind, "B", 60, 70))))[:3] == ["X", "H", "A"]
+
+
+@pytest.mark.parametrize("kind", ["BALL LOST", "CHALLENGE"])
+def test_losing_or_challenging_is_not_an_action_that_shows_control(tmp_path, game, kind):
+    assert labels(key(tmp_path, game, held(event(kind, "B", 60, 70)))) == ["X", "H", "X"]
+
+
+def test_the_earlier_key_is_still_available_for_comparison(tmp_path, game):
+    earlier = {"min_passes": 2, "require_follow_up": False}
+    two = [e for e in BRIEF_PASSES if e["start"]["frame"] != 53]
+    assert labels(key(tmp_path, game, two, **earlier))[:3] == ["X", "H", "A"]
+    assert labels(key(tmp_path, game, held(), **earlier))[:3] == ["X", "H", "A"]
+
+
+def without_carries(events):
+    """The same events with every ``CARRY`` logged as a ``PASS``: a log that records no carries."""
+    return [{**e, "type": {"name": "PASS"}} if e["type"]["name"] == "CARRY" else e for e in events]
+
+
+def test_held_and_brief_fixtures_log_carries():
+    assert any(e["type"]["name"] == "CARRY" for e in held())
+    assert not any(e["type"]["name"] == "CARRY" for e in without_carries(held()))
+
+
+def test_without_carries_in_the_log_a_long_spell_counts_on_time_alone(tmp_path, game):
+    assert labels(key(tmp_path, game, without_carries(held())))[:3] == ["X", "H", "A"]
+
+
+def test_without_carries_in_the_log_two_quick_passes_are_still_not_control(tmp_path, game):
+    two = [e for e in without_carries(BRIEF_PASSES) if e["start"]["frame"] != 53]
+    assert labels(key(tmp_path, game, two)) == ["X", "H", "X"]
+
+
+def test_the_follow_up_test_can_still_be_forced_on_a_log_without_carries(tmp_path, game):
+    truth = key(tmp_path, game, without_carries(held()), require_follow_up=True)
+    assert labels(truth) == ["X", "H", "X"]
 
 
 # -- games 1 and 2 (CSV) --------------------------------------------------------------------------
@@ -357,3 +429,52 @@ def test_cli_without_quiet_ball_prints_no_report(capsys, tmp_path):
     write_game(tmp_path)
     assert main(["othergame", "--root", str(tmp_path)]) == 0
     assert "quiet-ball check" not in capsys.readouterr().out
+
+
+# -- signal health ------------------------------------------------------------------------------
+
+
+def test_cli_signals_prints_coverage_and_distribution_stats(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--signals"]) == 0
+    out = capsys.readouterr().out
+    assert "sample3 signals (200 frames):" in out
+    for line in ("ball tracked", "ball speed", "nearest player", "team speed", "nobody tracked"):
+        assert any(row.strip().startswith(line) for row in out.splitlines())
+
+
+def test_cli_signals_combines_every_game_present(capsys, tmp_path):
+    from rondo.cli import main
+    from tests.othergames.fixtures import write_csv_game
+
+    write_csv_game(tmp_path, game=1)
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path), "--signals"]) == 0
+    out = capsys.readouterr().out
+    assert "sample1 signals (" in out and "sample3 signals (" in out
+    # no combined "all signals" row: coverage stats are per game, not a score to pool
+    assert "all signals (" not in out
+
+
+def test_cli_without_signals_prints_no_coverage_report(capsys, tmp_path):
+    from rondo.cli import main
+
+    write_game(tmp_path)
+    assert main(["othergame", "--root", str(tmp_path)]) == 0
+    assert "signals (" not in capsys.readouterr().out
+
+
+def test_signal_health_matches_the_signals_directly(tmp_path):
+    from rondo.cli import _signal_health
+    from rondo.registry import SIGNALS
+
+    write_game(tmp_path)
+    match = load_sample_game(tmp_path)
+    health = _signal_health(match)
+
+    bounds = SIGNALS["ball_bounds"](match)
+    tracked = bounds["ball_in_bounds"].notna()
+    assert health["frames"] == match.meta.n_frames
+    assert health["ball_tracked_pct"] == pytest.approx(100 * tracked.sum() / len(tracked))

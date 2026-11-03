@@ -30,6 +30,12 @@ def _check(args: argparse.Namespace) -> int:
     report = check_bundle(_data_dir(args.data_dir), expected_records=args.expected_records)
     for key, value in report.items():
         print(f"{key}: {value}")
+    if args.signals:  # the same report as ``othergame --signals``, to set the two side by side
+        from rondo import config as runtime_config
+
+        data_dir = _data_dir(args.data_dir) or runtime_config.data_dir()
+        match = load_match(data_dir, expected_frames=args.expected_frames)
+        _print_signal_health("match", _signal_health(match))
     return 0
 
 
@@ -218,6 +224,50 @@ def _print_quiet_ball_check(label: str, stats: dict) -> None:
     print(f"  baseline (any frame)     {baseline_pct:.1f}% fully untracked")
 
 
+def _signal_health(match) -> dict[str, float]:
+    """Coverage and distribution stats from the four ball/player signals, for a quick sanity
+    check on a game we have not tuned anything against yet: is the ball tracked about as often,
+    and moving and sitting about as far from players, as on the provided match?"""
+    from rondo.registry import SIGNALS
+
+    n = match.meta.n_frames
+    nearest = SIGNALS["ball_nearest"](match)
+    motion = SIGNALS["ball_motion"](match)
+    bounds = SIGNALS["ball_bounds"](match)
+    team = SIGNALS["team_motion"](match)
+
+    tracked = bounds["ball_in_bounds"].notna()
+    speed = motion.loc[tracked.to_numpy(), "ball_speed_ms"].dropna()
+    dist = nearest.loc[tracked.to_numpy(), "nearest_dist_m"].dropna()
+    team_speed = team["team_speed_mean_m_s"].dropna()
+
+    return {
+        "frames": n,
+        "ball_tracked_pct": 100 * tracked.sum() / n,
+        "ball_speed_median_ms": speed.median() if len(speed) else float("nan"),
+        "ball_speed_mean_ms": speed.mean() if len(speed) else float("nan"),
+        "nearest_dist_median_m": dist.median() if len(dist) else float("nan"),
+        "nearest_dist_mean_m": dist.mean() if len(dist) else float("nan"),
+        "team_speed_mean_ms": team_speed.mean() if len(team_speed) else float("nan"),
+        "nobody_tracked_pct": 100 * team["team_speed_mean_m_s"].isna().sum() / n,
+    }
+
+
+def _print_signal_health(label: str, health: dict[str, float]) -> None:
+    print(f"{label} signals ({int(health['frames'])} frames):")
+    print(f"  ball tracked      {health['ball_tracked_pct']:.1f}%")
+    print(
+        f"  ball speed        median {health['ball_speed_median_ms']:.1f} m/s, "
+        f"mean {health['ball_speed_mean_ms']:.1f} m/s (tracked frames)"
+    )
+    print(
+        f"  nearest player    median {health['nearest_dist_median_m']:.1f} m, "
+        f"mean {health['nearest_dist_mean_m']:.1f} m (ball tracked frames)"
+    )
+    print(f"  team speed        mean {health['team_speed_mean_ms']:.1f} m/s")
+    print(f"  nobody tracked    {health['nobody_tracked_pct']:.1f}% of frames")
+
+
 def _print_table(table: pd.DataFrame) -> None:
     print(f"{'window':<10} {'graded':>7} {'spellF1':>8} {'90% interval':>15} {'macroF1':>8}  poss")
     for row in table.itertuples(index=False):
@@ -259,7 +309,7 @@ def _othergame(args: argparse.Namespace) -> int:
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
 
-    tables, preds, truths, moments, quiet = [], [], [], [], []
+    tables, preds, truths, moments, quiet, health = [], [], [], [], [], []
     for game in games:
         match = load_sample_game(root, game)
         truth = answer_key(root, game, match.meta)
@@ -272,6 +322,8 @@ def _othergame(args: argparse.Namespace) -> int:
             moments.append((game, _error_breakdown(root, game, pred, truth)))
         if args.quiet_ball:
             quiet.append((game, _quiet_ball_check(root, game, match, pred, truth)))
+        if args.signals:
+            health.append((game, _signal_health(match)))
     if len(games) > 1:
         gap = pd.Series(["X"])
         pred = pd.concat([part for p in preds for part in (p, gap)], ignore_index=True)
@@ -301,6 +353,9 @@ def _othergame(args: argparse.Namespace) -> int:
             )
             total = {key: sum(stats[key] for _, stats in quiet) for key in keys}
             _print_quiet_ball_check("all", total)
+    if args.signals:
+        for game, stats in health:
+            _print_signal_health(f"sample{game}", stats)
     if args.result:
         command = (
             f"rondo othergame --game {args.game} --config {args.config} "
@@ -435,6 +490,12 @@ def _parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="aggregate sanity report on the data bundle")
     check.add_argument("--data-dir")
     check.add_argument("--expected-records", type=int)
+    check.add_argument("--expected-frames", type=int)
+    check.add_argument(
+        "--signals",
+        action="store_true",
+        help="also print ball/player signal coverage: tracked %%, speeds, nearest-player distance",
+    )
     check.set_defaults(handler=_check)
 
     tags = sub.add_parser("tags", help="how well Smart Tagging lines up with tracking and truth")
@@ -483,6 +544,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="quiet_ball",
         help="of the spurious switches far from any event, how many follow a quiet ball",
+    )
+    other.add_argument(
+        "--signals",
+        action="store_true",
+        help="also print ball/player signal coverage: tracked %%, speeds, nearest-player distance",
     )
     other.set_defaults(handler=_othergame)
 

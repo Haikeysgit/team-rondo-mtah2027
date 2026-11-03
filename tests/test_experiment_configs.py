@@ -46,6 +46,12 @@ def test_an_in_play_config_is_accepted_by_the_decoder_and_the_emission(name):
     build_params(RulesParams, config["emission_params"], "rules_v0")
 
 
+def test_the_starting_defaults_config_is_the_default_with_no_emission_settings():
+    expected = load(CONFIGS / "default.toml")
+    expected["emission_params"] = {}
+    assert load(CONFIGS / "experiments" / "starting-defaults.toml") == expected
+
+
 def test_the_out_carry_config_is_the_submitted_default():
     assert load(CONFIGS / "experiments" / "out-carry.toml") == load(CONFIGS / "default.toml")
 
@@ -63,6 +69,24 @@ def test_a_short_control_config_is_the_default_with_only_min_control_frames_chan
     expected = {key: dict(val) if isinstance(val, dict) else val for key, val in default.items()}
     del expected["emission_params"]["out_carry_weight"]
     expected["emission_params"]["min_control_frames"] = SHORT_CONTROL[name]
+    assert config == expected
+    ViterbiParams.from_dict(config["decoder_params"])
+    build_params(RulesParams, config["emission_params"], "rules_v0")
+
+
+# A contested ball, retried on the current default (contest-0.5 and contest-1.0 tested the same
+# margins on the old stay-dead-60 stack, rolled back 2026-10-27): the default with only
+# contest_margin_m added.
+CONTEST_CURRENT = {"contest-0.25": 0.25, "contest-0.5-current": 0.5, "contest-1.0-current": 1.0}
+
+
+@pytest.mark.parametrize("name", sorted(CONTEST_CURRENT))
+def test_a_contest_config_is_the_current_default_with_only_contest_margin_added(name):
+    default = load(CONFIGS / "default.toml")
+    config = load(CONFIGS / "experiments" / f"{name}.toml")
+
+    expected = {key: dict(val) if isinstance(val, dict) else val for key, val in default.items()}
+    expected["emission_params"]["contest_margin_m"] = CONTEST_CURRENT[name]
     assert config == expected
     ViterbiParams.from_dict(config["decoder_params"])
     build_params(RulesParams, config["emission_params"], "rules_v0")

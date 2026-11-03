@@ -18,6 +18,21 @@ def test_cli_check_prints_no_rows(capsys, tmp_bundle):
     assert "n_records: 50" in out and "records" in out and "\n0," not in out
 
 
+def test_cli_check_signals_prints_the_same_coverage_report_as_the_sample_games(capsys, tmp_bundle):
+    argv = ["check", "--data-dir", str(tmp_bundle), "--expected-records", "50"]
+    assert main([*argv, "--expected-frames", "50", "--signals"]) == 0
+    out = capsys.readouterr().out
+    assert "match signals (50 frames):" in out
+    for line in ("ball tracked", "ball speed", "nearest player", "team speed", "nobody tracked"):
+        assert any(row.strip().startswith(line) for row in out.splitlines())
+    assert "\n0," not in out
+
+
+def test_cli_check_without_signals_prints_no_coverage_report(capsys, tmp_bundle):
+    assert main(["check", "--data-dir", str(tmp_bundle), "--expected-records", "50"]) == 0
+    assert "signals (" not in capsys.readouterr().out
+
+
 def test_cli_tags_prints_rates_and_no_rows(capsys, tmp_bundle):
     assert main(["tags", "--data-dir", str(tmp_bundle), "--expected-frames", "50"]) == 0
     out = capsys.readouterr().out
