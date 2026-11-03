@@ -167,10 +167,25 @@ def _quiet_ball_check(root: Path, game: int, match, pred: pd.Series, truth: pd.S
     from rondo.registry import SIGNALS
     from rondo.viz.errors import error_moments
 
+    speed = SIGNALS["ball_motion"](match).set_index("frame")["ball_speed_ms"]
+
+    # Baseline: the same "fully untracked second before" rate, over every frame of the match, not
+    # just the error ones. Control evidence cannot accumulate while the ball is missing, so any
+    # switch tends to land shortly after a gap ends; this says whether the error frames land there
+    # more than a random frame would, or whether that is just how much of the match looks. Computed
+    # unconditionally (not only when there are spurious switches) so a game that happens to have
+    # none still contributes its full share of frames to the combined baseline.
+    tracked_in_window = speed.notna().astype(int).rolling(25, min_periods=1).sum().shift(1)
+    fully_untracked = tracked_in_window.fillna(0) == 0
+    baseline = {
+        "baseline_frames": int(fully_untracked.count()),
+        "baseline_untracked_frames": int(fully_untracked.sum()),
+    }
+
     moments = error_moments(pred, truth)
     spurious = moments[moments["status"] == "spurious"]
     if spurious.empty:
-        return {"n": 0, "quiet": 0, "active": 0, "untracked": 0}
+        return {"n": 0, "quiet": 0, "active": 0, "untracked": 0, **baseline}
 
     events = load_events(root, game)
     mask = pd.Series(
@@ -179,7 +194,6 @@ def _quiet_ball_check(root: Path, game: int, match, pred: pd.Series, truth: pd.S
     )
     far = spurious[mask]
 
-    speed = SIGNALS["ball_motion"](match).set_index("frame")["ball_speed_ms"]
     quiet = active = untracked = 0
     for frame in far["frame"]:
         window = speed.loc[max(0, frame - 25) : frame - 1].dropna()
@@ -189,16 +203,19 @@ def _quiet_ball_check(root: Path, game: int, match, pred: pd.Series, truth: pd.S
             quiet += 1
         else:
             active += 1
-    return {"n": len(far), "quiet": quiet, "active": active, "untracked": untracked}
+
+    return {"n": len(far), "quiet": quiet, "active": active, "untracked": untracked, **baseline}
 
 
 def _print_quiet_ball_check(label: str, stats: dict) -> None:
     print(f"{label} quiet-ball check ({stats['n']} spurious switches more than 2s from any event):")
     if stats["n"] == 0:
         return
+    baseline_pct = 100 * stats["baseline_untracked_frames"] / stats["baseline_frames"]
     print(f"  quiet before switch      {stats['quiet']}")
     print(f"  active before switch     {stats['active']}")
     print(f"  ball untracked           {stats['untracked']}")
+    print(f"  baseline (any frame)     {baseline_pct:.1f}% fully untracked")
 
 
 def _print_table(table: pd.DataFrame) -> None:
@@ -274,7 +291,14 @@ def _othergame(args: argparse.Namespace) -> int:
         for game, stats in quiet:
             _print_quiet_ball_check(f"sample{game}", stats)
         if len(quiet) > 1:
-            keys = ("n", "quiet", "active", "untracked")
+            keys = (
+                "n",
+                "quiet",
+                "active",
+                "untracked",
+                "baseline_frames",
+                "baseline_untracked_frames",
+            )
             total = {key: sum(stats[key] for _, stats in quiet) for key in keys}
             _print_quiet_ball_check("all", total)
     if args.result:
