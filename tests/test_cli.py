@@ -253,44 +253,13 @@ def test_cli_errors_reports_an_invalid_submission(capsys, tmp_path):
     assert "bad.csv" in capsys.readouterr().out
 
 
-def test_cli_errors_play_opens_each_moment_in_the_labeltool(monkeypatch, tmp_path):
-    truth = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
-    truth.iloc[30000:30500] = "H"
-    truth.iloc[30500:31000] = "A"
-    _write_window(tmp_path, "w1", truth)
-
-    pred = pd.Series("X", index=pd.RangeIndex(199319, name="frame"), name="label")
-    pred.iloc[30000:30500] = "H"  # the H -> A transition at 30500 is missed entirely
-    pred.iloc[30200:30260] = "A"  # and a spurious A spell: two more moments
+def test_cli_errors_has_no_play_flag(tmp_path, capsys):
+    """Organisers' clarification, Nov 3: our output is never checked against this game's video."""
     pred_path = tmp_path / "pred.csv"
-    pred.to_frame().reset_index().to_csv(pred_path, index=False)
-
-    opened, seen = [], []
-
-    class FakeSession:
-        def close(self):
-            opened.append("closed")
-
-    monkeypatch.setattr(
-        "rondo.labeltool.app.open_session",
-        lambda data_dir: opened.append(data_dir) or FakeSession(),
-    )
-    monkeypatch.setattr(
-        "rondo.labeltool.app.run",
-        lambda data_dir, window, start, end, *, session, read_only: seen.append(
-            (data_dir, window, start, end, session, read_only)
-        ),
-    )
-    argv = ["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1", "--play"]
-    assert main(argv) == 0
-    assert opened == [tmp_path, "closed"]  # the video is opened (and counted) once for all
-    assert len(seen) == 3
-    assert all(read_only for *_, read_only in seen)  # review never writes into labels/
-    assert len({id(session) for *_, session, _ in seen}) == 1
-    missed = next(s for s in seen if s[1] == "err_missed_30500")
-    assert missed[0] == tmp_path
-    assert missed[2] == 30500 - cli.PLAY_MARGIN_FRAMES
-    assert missed[3] == 30500 + cli.PLAY_MARGIN_FRAMES
+    pred_path.write_text("frame,label\n0,H\n")
+    with pytest.raises(SystemExit):
+        main(["errors", str(pred_path), "--data-dir", str(tmp_path), "--window", "w1", "--play"])
+    assert "unrecognized arguments: --play" in capsys.readouterr().err
 
 
 def test_cli_errors_warns_its_output_is_frame_level(capsys, tmp_path):
