@@ -160,6 +160,70 @@ def _print_error_breakdown(label: str, moments: pd.DataFrame) -> None:
         print(f"  {status:<9} {event:<14} {n}")
 
 
+def _quiet_ball_check(root: Path, game: int, match, pred: pd.Series, truth: pd.Series) -> dict:
+    """Of the spurious switches more than 2 s from any public event, how many follow a quiet
+    ball: median ball speed under 0.5 m/s (``still_ball_ms``) in the second before the switch,
+    rather than a pass or carry actually arriving there.
+
+    Checks a specific guess at what is behind that cluster: a team holds the ball through a quiet
+    spell while an opponent happens to stand within control_dist_m of it for over a second, which
+    reads as that opponent's control even though nothing was actually won.
+    """
+    from rondo.othergames.metrica import load_events, nearest_event_kind
+    from rondo.registry import SIGNALS
+    from rondo.viz.errors import error_moments
+
+    speed = SIGNALS["ball_motion"](match).set_index("frame")["ball_speed_ms"]
+
+    # Baseline: the same "fully untracked second before" rate, over every frame of the match, not
+    # just the error ones. Control evidence cannot accumulate while the ball is missing, so any
+    # switch tends to land shortly after a gap ends; this says whether the error frames land there
+    # more than a random frame would, or whether that is just how much of the match looks. Computed
+    # unconditionally (not only when there are spurious switches) so a game that happens to have
+    # none still contributes its full share of frames to the combined baseline.
+    tracked_in_window = speed.notna().astype(int).rolling(25, min_periods=1).sum().shift(1)
+    fully_untracked = tracked_in_window.fillna(0) == 0
+    baseline = {
+        "baseline_frames": int(fully_untracked.count()),
+        "baseline_untracked_frames": int(fully_untracked.sum()),
+    }
+
+    moments = error_moments(pred, truth)
+    spurious = moments[moments["status"] == "spurious"]
+    if spurious.empty:
+        return {"n": 0, "quiet": 0, "active": 0, "untracked": 0, **baseline}
+
+    events = load_events(root, game)
+    mask = pd.Series(
+        [nearest_event_kind(events, frame, max_gap=50) == "none" for frame in spurious["frame"]],
+        index=spurious.index,
+    )
+    far = spurious[mask]
+
+    quiet = active = untracked = 0
+    for frame in far["frame"]:
+        window = speed.loc[max(0, frame - 25) : frame - 1].dropna()
+        if window.empty:
+            untracked += 1
+        elif window.median() < 0.5:
+            quiet += 1
+        else:
+            active += 1
+
+    return {"n": len(far), "quiet": quiet, "active": active, "untracked": untracked, **baseline}
+
+
+def _print_quiet_ball_check(label: str, stats: dict) -> None:
+    print(f"{label} quiet-ball check ({stats['n']} spurious switches more than 2s from any event):")
+    if stats["n"] == 0:
+        return
+    baseline_pct = 100 * stats["baseline_untracked_frames"] / stats["baseline_frames"]
+    print(f"  quiet before switch      {stats['quiet']}")
+    print(f"  active before switch     {stats['active']}")
+    print(f"  ball untracked           {stats['untracked']}")
+    print(f"  baseline (any frame)     {baseline_pct:.1f}% fully untracked")
+
+
 def _signal_health(match) -> dict[str, float]:
     """Coverage and distribution stats from the four ball/player signals, for a quick sanity
     check on a game we have not tuned anything against yet: is the ball tracked about as often,
@@ -245,7 +309,7 @@ def _othergame(args: argparse.Namespace) -> int:
     with open(args.config, "rb") as handle:
         config = tomllib.load(handle)
 
-    tables, preds, truths, moments, health = [], [], [], [], []
+    tables, preds, truths, moments, quiet, health = [], [], [], [], [], []
     for game in games:
         match = load_sample_game(root, game)
         truth = answer_key(root, game, match.meta)
@@ -256,6 +320,8 @@ def _othergame(args: argparse.Namespace) -> int:
         truths.append(truth)
         if args.errors:
             moments.append((game, _error_breakdown(root, game, pred, truth)))
+        if args.quiet_ball:
+            quiet.append((game, _quiet_ball_check(root, game, match, pred, truth)))
         if args.signals:
             health.append((game, _signal_health(match)))
     if len(games) > 1:
@@ -273,6 +339,20 @@ def _othergame(args: argparse.Namespace) -> int:
         if len(moments) > 1:
             combined = pd.concat([breakdown for _, breakdown in moments], ignore_index=True)
             _print_error_breakdown("all", combined)
+    if args.quiet_ball:
+        for game, stats in quiet:
+            _print_quiet_ball_check(f"sample{game}", stats)
+        if len(quiet) > 1:
+            keys = (
+                "n",
+                "quiet",
+                "active",
+                "untracked",
+                "baseline_frames",
+                "baseline_untracked_frames",
+            )
+            total = {key: sum(stats[key] for _, stats in quiet) for key in keys}
+            _print_quiet_ball_check("all", total)
     if args.signals:
         for game, stats in health:
             _print_signal_health(f"sample{game}", stats)
@@ -441,6 +521,12 @@ def _parser() -> argparse.ArgumentParser:
         "--errors",
         action="store_true",
         help="also break missed/spurious/late counts down by the nearest event kind",
+    )
+    other.add_argument(
+        "--quiet-ball",
+        action="store_true",
+        dest="quiet_ball",
+        help="of the spurious switches far from any event, how many follow a quiet ball",
     )
     other.add_argument(
         "--signals",
