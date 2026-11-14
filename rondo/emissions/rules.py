@@ -6,9 +6,9 @@ alive unless something says otherwise. Evidence then adds to one label's score:
 - **Control**: the nearest player is within ``control_dist_m`` of a ball moving slower than
   ``control_speed_ms`` (a pass in flight is nobody's control) -> ``control_weight`` to that team,
   but only when the team keeps it: its run of control, passes between teammates included, spans
-  at least ``min_control_frames`` (2 s). The organisers' hint and our tactical analyst agree that
-  control means a few seconds on the ball; a touch, block or deflection gives no evidence at all,
-  so it cannot flip possession. The run is judged on the whole match, so its evidence still starts
+  at least ``min_control_frames`` (2 s by default; the submitted configuration uses 1 s). The
+  organisers' hint and our tactical analyst agree that control means keeping the ball; a touch,
+  block or deflection gives no evidence at all, so it cannot flip possession. The run is judged on the whole match, so its evidence still starts
   at the frame the team gained the ball, where the decoder places the switch. A ball is
   *contested*, and is nobody's control, when the other team's nearest player is less than
   ``contest_margin_m`` farther from it (a challenge, a defender pressing the keeper). The default
@@ -112,7 +112,7 @@ class RulesV0:
         self.params = build_params(RulesParams, params, "rules_v0")
 
     def fit(self, signals: pd.DataFrame, labels: pd.Series) -> RulesV0:
-        """Nothing to learn: the weights are set by hand and tuned on the validation windows."""
+        """Nothing to learn: the weights are set by hand and checked on other matches."""
         return self
 
     def predict(self, signals: pd.DataFrame) -> pd.DataFrame:
